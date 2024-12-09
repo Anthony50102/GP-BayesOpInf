@@ -1,0 +1,20 @@
+# Ignore everything
+*
+
+# ...except for support files in the root directory
+!.gitignore
+!/LICENSE
+!README.md
+!requirements.txt
+
+# ...and these subdirectories
+!codebase
+!models
+!PDEs
+!PDEsMulti
+!ODEs
+
+# ...and these files in the subdirectories.
+!*/*.py
+!*/*.ipynb
+!*/*.sh
