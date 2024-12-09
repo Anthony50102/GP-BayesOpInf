@@ -5,10 +5,10 @@ This repository contains the source code for the numerical experiments in the pa
 [**Bayesian learning with Gaussian processes for low-dimensional representations of time-dependent nonlinear systems**](https://arxiv.org/abs/2408.03455)
 
 by\
-[S. A. McQuarrie](https://scholar.google.com/citations?user=qQ6JDJ4AAAAJ) (Sandia National Laboratories),\
-[A. Chaudhuri](https://scholar.google.com/citations?user=oGL9YJIAAAAJ) (The University of Texas at Austin),\
-[K. E. Willcox](https://kiwi.oden.utexas.edu/) (The University of Texas at Austin), and\
-[M. Guo](https://scholar.google.com/citations?user=eON6MykAAAAJ) (Lund University).
+[Shane A. McQuarrie](https://scholar.google.com/citations?user=qQ6JDJ4AAAAJ) (Sandia National Laboratories),\
+[Anirban Chaudhuri](https://scholar.google.com/citations?user=oGL9YJIAAAAJ) (The University of Texas at Austin),\
+[Karen E. Willcox](https://kiwi.oden.utexas.edu/) (The University of Texas at Austin), and\
+[Mengwu Guo](https://scholar.google.com/citations?user=eON6MykAAAAJ) (Lund University).
 
 <details><summary>BibTex</summary><pre>
 @misc{mcquarrie2024gpbayesopinf,
@@ -45,7 +45,7 @@ $ conda activate gpbayesopinf
 Each of the three numerical experiments detailed in the paper is contained in its own folder.
 
 - Compressible Euler equations: [**PDEs/**](./PDEs/)
-- Nonlinear diffusion-reaction equation: [**PDEs/**](./PDEsMulti/)
+- Nonlinear diffusion-reaction equation: [**PDEsMulti/**](./PDEsMulti/)
 - SEIRD epidemiological model: [**ODEs/**](./ODEs/)
 
 To reproduce the figures in the paper, navigate to the directory and run `experiments.sh`.
