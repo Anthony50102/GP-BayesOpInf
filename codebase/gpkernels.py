@@ -3,6 +3,7 @@
 
 __all__ = [
     "GP_RBFW",
+    "TORCH_GP_RBFW"
 ]
 ### TODO - Numerically determine now
 

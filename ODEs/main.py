@@ -108,12 +108,18 @@ def main(
         time_domain_prediction=time_domain_prediction,
     )
 
+    torch_bayesian_model = step3.estimate_posterior(
+        gps=gps_torch,
+        time_domain_prediction=time_domain_prediction,
+    )
+
     utils.summarize_posterior(true_parameters, bayesian_model)
+    # utils.summarize_posterior(true_parameters, torch_bayesian_model)
 
     # Draw samples from the posterior.
     ICs = true_states[:, 0]
     with opinf.utils.TimedBlock("\nsampling posterior distribution"):
-        draws = bayesian_model.solution_posterior(
+        draws = torch_bayesian_model.solution_posterior(
             initial_conditions=ICs,
             timepoints=time_domain_prediction,
             ndraws=ndraws,
@@ -121,14 +127,70 @@ def main(
 
     # Step 4: plot results ----------------------------------------------------
     gp_predictions = [gp.predict(time_domain_training) for gp in gps]
+    torch_gp_predictions = [gp.predict(time_domain_training) for gp in gps_torch]
+    print(type(gp_predictions[0][0]))
+    print(type(torch_gp_predictions[0]))
+    gp_means = np.array([ms[0] for ms in gp_predictions])
+    torch_gp_means = np.array([ms.mean for ms in torch_gp_predictions])
+    abs_diff = np.abs(gp_means - torch_gp_means)
+    print("Absolute differences:")
+    print("  Min:", abs_diff.min())
+    print("  Max:", abs_diff.max())
+    print("  Mean:", abs_diff.mean())
+    print("  Std:", abs_diff.std())
+
+    # Compute relative differences (avoiding division by zero)
+    rel_diff = np.abs(gp_means - torch_gp_means) / (np.abs(gp_means) + 1e-8)
+    print("\nRelative differences:")
+    print("  Min:", rel_diff.min())
+    print("  Max:", rel_diff.max())
+    print("  Mean:", rel_diff.mean())
+    print("  Std:", rel_diff.std())
+
+    # Alternatively, use a norm-based metric (Frobenius norm)
+    fro_error = np.linalg.norm(gp_means - torch_gp_means) / np.linalg.norm(gp_means)
+    print("\nRelative Frobenius norm error:", fro_error)
+
+    # Finally, you can still check element-wise closeness if needed:
+    print("\nnp.allclose check:", np.allclose(gp_means, torch_gp_means, rtol=1e-1))
+
+    gp_stds=np.array([ms[1] for ms in gp_predictions])
+    print(type(torch_gp_predictions[0].stddev.numpy()), torch_gp_predictions[0].stddev.numpy().shape)
+    torch_stds = np.array([ms.stddev.numpy() for ms in torch_gp_predictions])
+    print(type(gp_stds), gp_stds.shape, type(torch_stds), torch_stds.shape)
+
+    abs_diff = np.abs(gp_stds - torch_stds)
+    print("Absolute differences:")
+    print("  Min:", abs_diff.min())
+    print("  Max:", abs_diff.max())
+    print("  Mean:", abs_diff.mean())
+    print("  Std:", abs_diff.std())
+
+    # Compute relative differences (avoiding division by zero)
+    rel_diff = np.abs(gp_stds - torch_stds) / (np.abs(gp_stds) + 1e-8)
+    print("\nRelative differences:")
+    print("  Min:", rel_diff.min())
+    print("  Max:", rel_diff.max())
+    print("  Mean:", rel_diff.mean())
+    print("  Std:", rel_diff.std())
+
+    # Alternatively, use a norm-based metric (Frobenius norm)
+    fro_error = np.linalg.norm(gp_stds - torch_stds) / np.linalg.norm(gp_stds)
+    print("\nRelative Frobenius norm error:", fro_error)
+
+    # Finally, you can still check element-wise closeness if needed:
+    print("\nnp.allclose check:", np.allclose(gp_stds, torch_stds, rtol=1e-1))
+
     plotter = step4.ODEPlotter(
         sampling_time_domain=time_domains_sampled,
         training_time_domain=time_domain_training,
         prediction_time_domain=time_domain_prediction,
         snapshots=snapshots_sampled,
         true_states=true_states,
-        gp_means=np.array([ms[0] for ms in gp_predictions]),
-        gp_stds=np.array([ms[1] for ms in gp_predictions]),
+        gp_means = torch_gp_means,
+        gp_stds = torch_stds,
+        # gp_means=np.array([ms[0] for ms in gp_predictions]),
+        # gp_stds=np.array([ms[1] for ms in gp_predictions]),
         draws=draws,
         labels=truthmodel.LABELS,
     )
@@ -160,7 +222,7 @@ def main(
         strict=True,
     )
     with opinf.utils.TimedBlock("sampling posterior distribution"):
-        draws = bayesian_model.solution_posterior(
+        draws = torch_bayesian_model.solution_posterior(
             initial_conditions=config.test_initial_conditions,
             timepoints=time_domain_prediction,
             ndraws=ndraws,

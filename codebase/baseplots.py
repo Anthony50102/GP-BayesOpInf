@@ -131,8 +131,7 @@ class _BasePlotter(abc.ABC):
     @staticmethod
     def _plot_gp(ax, t, mean, stdev, width, **kwargs):
         """Plot the mean and variance of a GP after regression."""
-        print(stdev.stddev)
-        spread = width * stdev.stddev.numpy()
+        spread = width * stdev
         low, high = mean - spread, mean + spread
 
         kws = dict(

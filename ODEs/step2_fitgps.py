@@ -86,7 +86,7 @@ def fit_gaussian_processes(
         Observed training snapshots.
     """
     return [
-        torch_fit_single_gaussian_process(
+        fit_single_gaussian_process(
             stateindex=stateindex,
             time_domain_training=time_domain_training,
             time_domain_sampled=time_domains_sampled[stateindex],
