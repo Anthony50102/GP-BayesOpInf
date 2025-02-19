@@ -92,7 +92,17 @@ def main(
         snapshots_sampled=snapshots_sampled,
         gp_regularizer=gp_regularizer,
     )
+    gps_torch = step2.torch_fit_gaussian_processes(
+        time_domain_training=time_domain_training,
+        time_domains_sampled=time_domains_sampled,
+        snapshots_sampled=snapshots_sampled,
+        gp_regularizer=gp_regularizer,
+    )
+    print("GPs finished fitting")
+    print(f"Sklearn: {gps}")
+    print(f"Torch: {gps_torch}")
 
+    return
     # Step 3: Construct the posterior hyperparameters -------------------------
     bayesian_model = step3.estimate_posterior(
         gps=gps,
