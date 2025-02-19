@@ -93,6 +93,14 @@ def main(
         gp_regularizer=gp_regularizer,
     )
 
+    print("#"*20)
+    print("#"*20)
+    print("#"*20)
+    print(gps)
+    print("#"*20)
+    print("#"*20)
+    print("#"*20)
+
     # Step 3: Construct the posterior hyperparameters -------------------------
     bayesian_model = step3.estimate_posterior(
         gps=gps,
