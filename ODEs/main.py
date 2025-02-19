@@ -102,7 +102,6 @@ def main(
     print(f"Sklearn: {gps}")
     print(f"Torch: {gps_torch}")
 
-    return
     # Step 3: Construct the posterior hyperparameters -------------------------
     bayesian_model = step3.estimate_posterior(
         gps=gps,
@@ -211,7 +210,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--gpreg",
         type=float,
-        default=1e-8,
+        default=1e-4,
         help="regularization for GP matrices (eta)",
     )
     parser.add_argument(
