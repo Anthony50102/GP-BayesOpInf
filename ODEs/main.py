@@ -125,11 +125,11 @@ def main(
     )
 
     # If desired, export experimental data to HDF5 files for later.
-    if exportto is not None:
-        os.makedirs(os.path.dirname(exportto), exist_ok=True)
-        dfile = f"{exportto}_data.h5"
-        with opinf.utils.TimedBlock(f"exporting data to {dfile}"):
-            plotter.save(dfile, overwrite=True)
+    # if exportto is not None:
+    #     os.makedirs(os.path.dirname(exportto), exist_ok=True)
+    #     dfile = f"{exportto}_data.h5"
+    #     with opinf.utils.TimedBlock(f"exporting data to {dfile}"):
+    #         plotter.save(dfile, overwrite=True)
 
     # Plot and save results.
     with opinf.utils.TimedBlock("\nplotting GP training fit\n"):
