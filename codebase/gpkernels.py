@@ -7,16 +7,16 @@ __all__ = [
 ### TODO - Numerically determine now
 
 import abc
-# import joblib
-# import numpy as np
-# import scipy.linalg as la
+import joblib
+import numpy as np
+import scipy.linalg as la
 
-# from sklearn.gaussian_process import GaussianProcessRegressor
-# from sklearn.gaussian_process.kernels import (
-#     ConstantKernel,
-#     RBF,
-#     WhiteKernel,
-# )
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import (
+    ConstantKernel,
+    RBF,
+    WhiteKernel,
+)
 
 ### New Imports
 import torch
@@ -45,7 +45,7 @@ class ExactGPModel(ExactGP):
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
 
-class _BaseGP(abc.ABC): 
+class BaseGP(abc.ABC): 
     """Base class for gpytorch Gaussian process regressor wrappers."""
     def __init__(self):
         self.model = None
@@ -148,7 +148,7 @@ class _BaseGP(abc.ABC):
                                        K_zy: torch.Tensor,
                                        K_zz: torch.Tensor,
                                        kappa_zy: torch.Tensor,
-                                       eta: float = 1e-8):
+                                       eta: float = 1e-1):
         L = torch.cholesky(K_yy)
         y_unsq = self.y.unsqueeze(-1)  # shape (m, 1)
         K_yy_inv_y = torch.cholesky_solve(y_unsq, L)
@@ -165,7 +165,7 @@ class _BaseGP(abc.ABC):
         self.sqrtW = (evecs @ torch.diag(1.0 / torch.sqrt(evals)) @ evecs.T).detach().numpy().astype(np.float64)
 
 
-class GP_RBFW(_BaseGP):
+class GP_RBFW(BaseGP):
     """Gaussian process regressor with a kernel of the form:
 
         k(t, t') = constant * exp(-(t - t')^2 / (2 * length_scale^2)) + white_noise.
@@ -241,7 +241,7 @@ class GP_RBFW(_BaseGP):
         tdiff = t1.unsqueeze(1) - t2.unsqueeze(0)
         return self.constant * torch.exp(-(tdiff**2) / (2 * self.length_scale**2))
 
-    def compute_lstsq_matrices(self, t_est, eta=1e-8):
+    def compute_lstsq_matrices(self, t_est, eta=1e-1):
         r"""Compute the data needed for the GP-BayesOpInf least squares.
 
         This sets the following attributes:
