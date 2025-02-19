@@ -85,6 +85,7 @@ def main(
         training_span[-1],
         num_regression_points,
     )
+    print(type(time_domain_training), type(time_domains_sampled), type(snapshots_sampled))
 
     gps = step2.fit_gaussian_processes(
         time_domain_training=time_domain_training,
@@ -196,11 +197,11 @@ def main(
     )
 
     # If desired, export experimental data to HDF5 files for later.
-    # if exportto is not None:
-    #     os.makedirs(os.path.dirname(exportto), exist_ok=True)
-    #     dfile = f"{exportto}_data.h5"
-    #     with opinf.utils.TimedBlock(f"exporting data to {dfile}"):
-    #         plotter.save(dfile, overwrite=True)
+    if exportto is not None:
+        os.makedirs(os.path.dirname(exportto), exist_ok=True)
+        dfile = f"{exportto}_data.h5"
+        with opinf.utils.TimedBlock(f"exporting data to {dfile}"):
+            plotter.save(dfile, overwrite=True)
 
     # Plot and save results.
     with opinf.utils.TimedBlock("\nplotting GP training fit\n"):
@@ -272,7 +273,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--gpreg",
         type=float,
-        default=1e-4,
+        default=1e-8,
         help="regularization for GP matrices (eta)",
     )
     parser.add_argument(

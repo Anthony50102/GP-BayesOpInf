@@ -96,11 +96,14 @@ class TorchBaseGP(abc.ABC):
         t_tensor = torch.tensor(t, dtype=torch.float32).unsqueeze(-1) if not torch.is_tensor(t) else t
         self.model.eval()
         self.likelihood.eval()
-        with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            pred = self.likelihood(self.model(t_tensor))
-            # Attach a .std attribute for compatibility (sqrt of variance).
-            pred.std = pred.variance.sqrt()
-        return pred
+        # with torch.no_grad(), gpytorch.settings.fast_pred_var():
+        #     pred = self.likelihood(self.model(t_tensor))
+        #     # Attach a .std attribute for compatibility (sqrt of variance).
+        #     pred.std = pred.variance.sqrt()
+        # return pred
+        with torch.no_grad():
+            pred = self.model(t_tensor)
+        return pred 
 
     def prediction_bounds(self, t, kind="95%"):
         pred = self.predict(t)
