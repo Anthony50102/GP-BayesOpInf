@@ -85,7 +85,6 @@ def main(
         training_span[-1],
         num_regression_points,
     )
-    print(type(time_domain_training), type(time_domains_sampled), type(snapshots_sampled))
 
     gps = step2.fit_gaussian_processes(
         time_domain_training=time_domain_training,
@@ -273,7 +272,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--gpreg",
         type=float,
-        default=1e-8,
+        default=5e-8,
         help="regularization for GP matrices (eta)",
     )
     parser.add_argument(

@@ -7,6 +7,7 @@ __all__ = [
 ]
 ### TODO - Numerically determine now
 
+import math
 import abc
 import joblib
 import numpy as np
@@ -30,15 +31,21 @@ from gpytorch.kernels import ScaleKernel, RBFKernel
 
 class ExactGPModel(ExactGP):
     def __init__(self, train_x, train_y, likelihood,
-                 constant_bounds, length_scale_bounds, noise_level_bounds):
+                 constant_bounds=None, length_scale_bounds=None, noise_level_bounds=None):
         super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
+        self.noise_level_bounds = noise_level_bounds
         self.mean_module = ZeroMean()
         # Here we use a ScaleKernel * RBFKernel plus a WhiteNoiseKernel to mimic
         # k(t,t') = constant * exp(-(t-t')^2/(2*length_scale^2)) + noise_level δ(t-t')
-        self.covar_module = ScaleKernel(
-            RBFKernel(lengthscale_constraint=gpytorch.constraints.Interval(*length_scale_bounds)),
-            outputscale_constraint=gpytorch.constraints.Interval(*constant_bounds)
-        )
+        if constant_bounds and length_scale_bounds:
+            self.covar_module = ScaleKernel(
+                RBFKernel(lengthscale_constraint=gpytorch.constraints.Interval(*length_scale_bounds)),
+                outputscale_constraint=gpytorch.constraints.Interval(*constant_bounds)
+            )
+        else:
+            self.covar_module = ScaleKernel(
+                RBFKernel(),
+            )
     
     def forward(self, x):
         mean_x = self.mean_module(x)
@@ -69,8 +76,8 @@ class TorchBaseGP(abc.ABC):
         # Store training data as tensors.
         self.t_training = torch.tensor(t_training, dtype=torch.float32)
         self.y = torch.tensor(training_data, dtype=torch.float32)
-        # Create likelihood and model. (The bounds and training iterations are defined in GP_RBFW.)
-        self.likelihood = GaussianLikelihood()
+        # Create likelihood with noise constraint and model.
+        self.likelihood = GaussianLikelihood(noise_constraint=gpytorch.constraints.Interval(*self.noise_level_bounds))
         # Note: the model expects inputs with an extra feature dimension.
         train_x = self.t_training.unsqueeze(-1)
         train_y = self.y
@@ -78,32 +85,34 @@ class TorchBaseGP(abc.ABC):
             train_x, train_y, self.likelihood,
             self.constant_bounds, self.length_scale_bounds, self.noise_level_bounds
         )
+        # Removed redundant likelihood reassignment.
         # Training mode.
         self.model.train()
         self.likelihood.train()
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=0.1)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=0.05)
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.likelihood, self.model)
-        for i in range(self.training_iter):
-            optimizer.zero_grad()
-            output = self.model(train_x)
-            loss = -mll(output, train_y)
-            loss.backward()
-            optimizer.step()
+        for j in range(5):
+            for i in range(self.training_iter):
+                optimizer.zero_grad()
+                output = self.model(train_x)
+                loss = -mll(output, train_y)
+                loss.backward()
+                optimizer.step()
         return self
 
     def predict(self, t):
         # Ensure t is a tensor with shape (n,1)
-        t_tensor = torch.tensor(t, dtype=torch.float32).unsqueeze(-1) if not torch.is_tensor(t) else t
+        t_tensor = (
+            torch.tensor(t, dtype=torch.float32).unsqueeze(-1)
+            if not torch.is_tensor(t) else t
+        )
         self.model.eval()
         self.likelihood.eval()
-        # with torch.no_grad(), gpytorch.settings.fast_pred_var():
-        #     pred = self.likelihood(self.model(t_tensor))
-        #     # Attach a .std attribute for compatibility (sqrt of variance).
-        #     pred.std = pred.variance.sqrt()
-        # return pred
-        with torch.no_grad():
-            pred = self.model(t_tensor)
-        return pred 
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            pred = self.likelihood(self.model(t_tensor))
+            # Attach .std for compatibility (sqrt of variance)
+            pred.std = pred.variance.sqrt()
+        return pred
 
     def prediction_bounds(self, t, kind="95%"):
         pred = self.predict(t)
@@ -178,10 +187,10 @@ class TORCH_GP_RBFW(TorchBaseGP):
     This class mimics the interface of the sklearn wrapper.
     """
     def __init__(self,
-                 constant_bounds=(1e-5, 1e5),
-                 length_scale_bounds=(1.5e-6, 0.002),
-                 noise_level_bounds=(1e-14, 1e-10),
-                 training_iter=50):
+                 constant_bounds=(1e-8, 1e5),
+                 length_scale_bounds=(.1, 100),
+                 noise_level_bounds=(1e-16, .5),
+                 training_iter=500):
         super().__init__()
         self.constant_bounds = constant_bounds
         self.length_scale_bounds = length_scale_bounds
@@ -205,15 +214,10 @@ class TORCH_GP_RBFW(TorchBaseGP):
             return self.model.covar_module.base_kernel.lengthscale
 
     @property
-    # TODO - Fix this
     def noise_level(self):
         self.model.eval()
-        if hasattr(self.model.covar_module, "kernels"):
-            for kernel in self.model.covar_module.kernels:
-                if isinstance(kernel, int):
-                    return kernel.noise
-        # Otherwise fallback to the likelihood noise.
-        return self.likelihood.noise
+        noise = self.likelihood.noise
+        return noise.item() if torch.is_tensor(noise) else noise
 
     def __str__(self):
         return "\n\t".join(
