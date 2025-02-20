@@ -35,6 +35,7 @@ class ExactGPModel(ExactGP):
         super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
         self.noise_level_bounds = noise_level_bounds
         self.mean_module = ZeroMean()
+        self.mean_module = gpytorch.means.ConstantMean()
         # Here we use a ScaleKernel * RBFKernel plus a WhiteNoiseKernel to mimic
         # k(t,t') = constant * exp(-(t-t')^2/(2*length_scale^2)) + noise_level δ(t-t')
         if constant_bounds and length_scale_bounds:
@@ -42,6 +43,7 @@ class ExactGPModel(ExactGP):
                 RBFKernel(lengthscale_constraint=gpytorch.constraints.Interval(*length_scale_bounds)),
                 outputscale_constraint=gpytorch.constraints.Interval(*constant_bounds)
             )
+        
         else:
             self.covar_module = ScaleKernel(
                 RBFKernel(),
@@ -83,7 +85,7 @@ class TorchBaseGP(abc.ABC):
         train_y = self.y
         self.model = ExactGPModel(
             train_x, train_y, self.likelihood,
-            self.constant_bounds, self.length_scale_bounds, self.noise_level_bounds
+            # self.constant_bounds, self.length_scale_bounds, self.noise_level_bounds
         )
         # Removed redundant likelihood reassignment.
         # Training mode.
