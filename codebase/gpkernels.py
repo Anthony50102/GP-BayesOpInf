@@ -190,7 +190,7 @@ class TORCH_GP_RBFW(TorchBaseGP):
                  constant_bounds=(1e-8, 1e5),
                  length_scale_bounds=(.1, 100),
                  noise_level_bounds=(1e-16, .5),
-                 training_iter=500):
+                 training_iter=100):
         super().__init__()
         self.constant_bounds = constant_bounds
         self.length_scale_bounds = length_scale_bounds
