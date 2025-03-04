@@ -13,22 +13,6 @@ import step2_fitgps as step2
 import step3_estimate as step3
 import step4_plot as step4
 
-import ode_models as odes
-from config_lotka_volterra import Model
-from config_lotka_volterra import test_initial_conditions
-alpha = 1.5
-beta = 1
-delta = 1
-gamma = 3
-x0 = 1
-y0 = 1
-t = np.linspace(0, 20, 500)
-X0 = [x0, y0]
-
-lotkavolterra = odes.LotkaVolterra([alpha, beta, delta, gamma])
-solution = lotkavolterra.solve(initial_conditions=X0, timepoints=t)
-noise_solution = lotkavolterra.noise(solution, 0.10)
-
 
 def main(
     training_span: tuple[float, float],
@@ -97,17 +81,9 @@ def main(
     # True States: Model solutions at each time step in Time Domain predictions i.e. shape = (5,500)
     # Time Domains Sampled: Whatever sample of the time domains are being chosen i.e. noisy training shape = (5,120), or i.e. spares shape (5,10)
     # Snapshots Sampled: Coresspoding truth values at Time Domains sampled (same shape)
-    print(type(truthmodel), time_domain_prediction.shape, true_states.shape, np.array(time_domains_sampled).shape, np.array(snapshots_sampled).shape)
-    # TODO - Check if this is the correct sampling
-    lv_time_sampled = np.repeat(np.expand_dims(t[:90], axis=0), repeats=2 ,axis=0)
-    if not np.allclose(lv_time_sampled[0], lv_time_sampled[1]):
-        print("BFHFJSJ")
-    lv_snapshots_sampled = noise_solution[:,:90]
+    # print(type(truthmodel), time_domain_prediction.shape, true_states.shape, np.array(time_domains_sampled).shape, np.array(snapshots_sampled).shape)
 
     true_parameters = np.copy(truthmodel.parameters)
-    lv_true_parameters = np.copy(Model().parameters)
-    print(t.shape, noise_solution.shape, lv_time_sampled.shape, lv_snapshots_sampled.shape)
-    print(lv_true_parameters, true_parameters)
 
     # Training span: The range in which the training data spans i.e (0,60)
 
@@ -117,22 +93,12 @@ def main(
         training_span[-1],
         num_regression_points,
     )
-    # Time domain training: Points at which to create the time derivative and state computations for parameter estimation
-    print(time_domain_training.shape)
 
-    # gps = step2.fit_gaussian_processes(
-    #     time_domain_training=time_domain_training,
-    #     time_domains_sampled=time_domains_sampled,
-    #     snapshots_sampled=snapshots_sampled,
-    #     gp_regularizer=gp_regularizer,
-    # )
-
-    lv_gps = step2.fit_gaussian_processes(
+    gps = step2.fit_gaussian_processes(
         time_domain_training=time_domain_training,
-        time_domains_sampled=lv_time_sampled,
-        snapshots_sampled=lv_snapshots_sampled,
+        time_domains_sampled=time_domains_sampled,
+        snapshots_sampled=snapshots_sampled,
         gp_regularizer=gp_regularizer,
-        num_vars=2
     )
 
     # GPS: Gives a GP for each variable 
@@ -147,101 +113,92 @@ def main(
     # print(f"Torch: {gps_torch}")
 
     # Step 3: Construct the posterior hyperparameters -------------------------
-    # bayesian_model = step3.estimate_posterior(
-    #     gps=gps,
-    #     time_domain_prediction=time_domain_prediction,
-    # )
-
-    lv_bayesian_model = step3.estimate_posterior(
-        gps=lv_gps,
-        time_domain_prediction=t,
-        model=Model()
+    bayesian_model = step3.estimate_posterior(
+        gps=gps,
+        time_domain_prediction=time_domain_prediction,
     )
 
-    # torch_bayesian_model = step3.estimate_posterior(
-    #     gps=gps_torch,
-    #     time_domain_prediction=time_domain_prediction,
-    # )
+    torch_bayesian_model = step3.estimate_posterior(
+        gps=gps_torch,
+        time_domain_prediction=time_domain_prediction,
+    )
 
-    # utils.summarize_posterior(true_parameters, bayesian_model)
+    utils.summarize_posterior(true_parameters, bayesian_model)
     # utils.summarize_posterior(true_parameters, torch_bayesian_model)
-    utils.summarize_posterior(lv_true_parameters, lv_bayesian_model)
 
     # Draw samples from the posterior.
-    ICs = noise_solution[:, 0]
+    ICs = true_states[:, 0]
     with opinf.utils.TimedBlock("\nsampling posterior distribution"):
-        draws = lv_bayesian_model.solution_posterior(
+        draws = torch_bayesian_model.solution_posterior(
             initial_conditions=ICs,
             timepoints=time_domain_prediction,
             ndraws=ndraws,
         )
 
     # Step 4: plot results ----------------------------------------------------
-    gp_predictions = [gp.predict(time_domain_training) for gp in lv_gps]
-    # torch_gp_predictions = [gp.predict(time_domain_training) for gp in gps_torch]
+    gp_predictions = [gp.predict(time_domain_training) for gp in gps]
+    torch_gp_predictions = [gp.predict(time_domain_training) for gp in gps_torch]
     print(type(gp_predictions[0][0]))
-    # print(type(torch_gp_predictions[0]))
+    print(type(torch_gp_predictions[0]))
     gp_means = np.array([ms[0] for ms in gp_predictions])
-    # torch_gp_means = np.array([ms.mean for ms in torch_gp_predictions])
-    # abs_diff = np.abs(gp_means - torch_gp_means)
-    # print("Absolute differences:")
-    # print("  Min:", abs_diff.min())
-    # print("  Max:", abs_diff.max())
-    # print("  Mean:", abs_diff.mean())
-    # print("  Std:", abs_diff.std())
+    torch_gp_means = np.array([ms.mean for ms in torch_gp_predictions])
+    abs_diff = np.abs(gp_means - torch_gp_means)
+    print("Absolute differences:")
+    print("  Min:", abs_diff.min())
+    print("  Max:", abs_diff.max())
+    print("  Mean:", abs_diff.mean())
+    print("  Std:", abs_diff.std())
 
-    # # Compute relative differences (avoiding division by zero)
-    # rel_diff = np.abs(gp_means - torch_gp_means) / (np.abs(gp_means) + 1e-8)
-    # print("\nRelative differences:")
-    # print("  Min:", rel_diff.min())
-    # print("  Max:", rel_diff.max())
-    # print("  Mean:", rel_diff.mean())
-    # print("  Std:", rel_diff.std())
+    # Compute relative differences (avoiding division by zero)
+    rel_diff = np.abs(gp_means - torch_gp_means) / (np.abs(gp_means) + 1e-8)
+    print("\nRelative differences:")
+    print("  Min:", rel_diff.min())
+    print("  Max:", rel_diff.max())
+    print("  Mean:", rel_diff.mean())
+    print("  Std:", rel_diff.std())
 
-    # # Alternatively, use a norm-based metric (Frobenius norm)
-    # fro_error = np.linalg.norm(gp_means - torch_gp_means) / np.linalg.norm(gp_means)
-    # print("\nRelative Frobenius norm error:", fro_error)
+    # Alternatively, use a norm-based metric (Frobenius norm)
+    fro_error = np.linalg.norm(gp_means - torch_gp_means) / np.linalg.norm(gp_means)
+    print("\nRelative Frobenius norm error:", fro_error)
 
-    # # Finally, you can still check element-wise closeness if needed:
-    # print("\nnp.allclose check:", np.allclose(gp_means, torch_gp_means, rtol=1e-1))
+    # Finally, you can still check element-wise closeness if needed:
+    print("\nnp.allclose check:", np.allclose(gp_means, torch_gp_means, rtol=1e-1))
 
     gp_stds=np.array([ms[1] for ms in gp_predictions])
-    # print(type(torch_gp_predictions[0].stddev.numpy()), torch_gp_predictions[0].stddev.numpy().shape)
-    # torch_stds = np.array([ms.stddev.numpy() for ms in torch_gp_predictions])
-    # print(type(gp_stds), gp_stds.shape, type(torch_stds), torch_stds.shape)
+    print(type(torch_gp_predictions[0].stddev.numpy()), torch_gp_predictions[0].stddev.numpy().shape)
+    torch_stds = np.array([ms.stddev.numpy() for ms in torch_gp_predictions])
+    print(type(gp_stds), gp_stds.shape, type(torch_stds), torch_stds.shape)
 
-    # abs_diff = np.abs(gp_stds - torch_stds)
-    # print("Absolute differences:")
-    # print("  Min:", abs_diff.min())
-    # print("  Max:", abs_diff.max())
-    # print("  Mean:", abs_diff.mean())
-    # print("  Std:", abs_diff.std())
+    abs_diff = np.abs(gp_stds - torch_stds)
+    print("Absolute differences:")
+    print("  Min:", abs_diff.min())
+    print("  Max:", abs_diff.max())
+    print("  Mean:", abs_diff.mean())
+    print("  Std:", abs_diff.std())
 
-    # # Compute relative differences (avoiding division by zero)
-    # rel_diff = np.abs(gp_stds - torch_stds) / (np.abs(gp_stds) + 1e-8)
-    # print("\nRelative differences:")
-    # print("  Min:", rel_diff.min())
-    # print("  Max:", rel_diff.max())
-    # print("  Mean:", rel_diff.mean())
-    # print("  Std:", rel_diff.std())
+    # Compute relative differences (avoiding division by zero)
+    rel_diff = np.abs(gp_stds - torch_stds) / (np.abs(gp_stds) + 1e-8)
+    print("\nRelative differences:")
+    print("  Min:", rel_diff.min())
+    print("  Max:", rel_diff.max())
+    print("  Mean:", rel_diff.mean())
+    print("  Std:", rel_diff.std())
 
-    # # Alternatively, use a norm-based metric (Frobenius norm)
-    # fro_error = np.linalg.norm(gp_stds - torch_stds) / np.linalg.norm(gp_stds)
-    # print("\nRelative Frobenius norm error:", fro_error)
+    # Alternatively, use a norm-based metric (Frobenius norm)
+    fro_error = np.linalg.norm(gp_stds - torch_stds) / np.linalg.norm(gp_stds)
+    print("\nRelative Frobenius norm error:", fro_error)
 
-    # # Finally, you can still check element-wise closeness if needed:
-    # print("\nnp.allclose check:", np.allclose(gp_stds, torch_stds, rtol=1e-1))
-    print(gp_means)
-    truthmodel = Model()
+    # Finally, you can still check element-wise closeness if needed:
+    print("\nnp.allclose check:", np.allclose(gp_stds, torch_stds, rtol=1e-1))
 
     plotter = step4.ODEPlotter(
-        sampling_time_domain=lv_time_sampled,
+        sampling_time_domain=time_domains_sampled,
         training_time_domain=time_domain_training,
-        prediction_time_domain=t,
-        snapshots=lv_snapshots_sampled,
-        true_states=noise_solution,
-        gp_means = gp_means,
-        gp_stds = gp_stds,
+        prediction_time_domain=time_domain_prediction,
+        snapshots=snapshots_sampled,
+        true_states=true_states,
+        gp_means = torch_gp_means,
+        gp_stds = torch_stds,
         # gp_means=np.array([ms[0] for ms in gp_predictions]),
         # gp_stds=np.array([ms[1] for ms in gp_predictions]),
         draws=draws,
@@ -267,25 +224,21 @@ def main(
             utils.save_figure(f"predict{k}.pdf", andopen=openonsave)
 
     # Prediction at different initial conditions.
-    if test_initial_conditions is None:
+    if config.test_initial_conditions is None:
         return
-    print(f"{truthmodel}")
     test_trajectory = truthmodel.solve(
-        test_initial_conditions,
+        config.test_initial_conditions,
         time_domain_prediction,
         strict=True,
     )
-    print("#"*60)
     with opinf.utils.TimedBlock("sampling posterior distribution"):
-        draws = lv_bayesian_model.solution_posterior(
-            initial_conditions=test_initial_conditions,
+        draws = torch_bayesian_model.solution_posterior(
+            initial_conditions=config.test_initial_conditions,
             timepoints=time_domain_prediction,
             ndraws=ndraws,
         )
 
-    print("#"*60)
     fig = plotter.plot_posterior_newICs(draws, truth=test_trajectory)
-    print("#"*60)
     utils.save_figure("newtrajectory.pdf", andopen=openonsave, fig=fig)
 
 

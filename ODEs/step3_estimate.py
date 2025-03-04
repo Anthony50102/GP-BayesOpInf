@@ -183,6 +183,8 @@ def estimate_posterior(
     gps,
     time_domain_prediction,
     initial_conditions=None,
+    # TODO - REMOVE
+    model=None,
 ) -> bayes.BayesianODE:
     """Construct the posterior parameter distribution.
 
@@ -202,7 +204,10 @@ def estimate_posterior(
         Bayesian ODE model.
     """
     with opinf.utils.TimedBlock("constructing posterior hyperparameters\n"):
-        model = config.Model()
+        if model == None:
+            model = config.Model()
+        else:
+            model = model
         state_estimates = np.array([gp.state_estimate for gp in gps])
 
         # Construct the data matrix, RHS ddts vector, and weight matrix.
@@ -210,9 +215,11 @@ def estimate_posterior(
         ddt_estimates = np.concatenate([gp.ddt_estimate for gp in gps])
         W = la.block_diag(*[gp.sqrtW for gp in gps])
 
+
         # Fit a weighted least-squares solver for the problem.
         lstsq_solver = wlstsq.WeightedLSTSQSolver(W, regularizer=1)
         lstsq_solver.fit(D, ddt_estimates)
+
 
         # Select a single regularizer for all equations.
         return _posterior_autoregularized_multisample(

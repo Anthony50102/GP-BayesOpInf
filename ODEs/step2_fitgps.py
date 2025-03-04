@@ -70,6 +70,8 @@ def fit_gaussian_processes(
     time_domains_sampled: list[np.ndarray],
     snapshots_sampled: np.ndarray,
     gp_regularizer: float = 1e-8,
+    # TODO - REMOVE
+    num_vars = None
 ) -> Iterable[gpkernels.GP_RBFW]:
     """Fit Gaussian Process (GP) regression models to the snapshot data,
     one state variable at a time.
@@ -85,16 +87,28 @@ def fit_gaussian_processes(
     snapshots_sampled : (num_variables, m) ndarray
         Observed training snapshots.
     """
-    return [
-        fit_single_gaussian_process(
-            stateindex=stateindex,
-            time_domain_training=time_domain_training,
-            time_domain_sampled=time_domains_sampled[stateindex],
-            state_variable_sampled=snapshots_sampled[stateindex],
-            gp_regularizer=gp_regularizer,
-        )
-        for stateindex in range(config.NUMVARS)
-    ]
+    if num_vars is None:
+        return [
+            fit_single_gaussian_process(
+                stateindex=stateindex,
+                time_domain_training=time_domain_training,
+                time_domain_sampled=time_domains_sampled[stateindex],
+                state_variable_sampled=snapshots_sampled[stateindex],
+                gp_regularizer=gp_regularizer,
+            )
+            for stateindex in range(config.NUMVARS) 
+        ]
+    else:
+        return [
+            fit_single_gaussian_process(
+                stateindex=stateindex,
+                time_domain_training=time_domain_training,
+                time_domain_sampled=time_domains_sampled[stateindex],
+                state_variable_sampled=snapshots_sampled[stateindex],
+                gp_regularizer=gp_regularizer,
+            )
+            for stateindex in range(num_vars) 
+        ]
 
 def torch_fit_single_gaussian_process(
     stateindex: int,
