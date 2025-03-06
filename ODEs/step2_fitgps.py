@@ -13,7 +13,6 @@ from typing import Iterable
 
 import opinf
 
-import config
 import gpkernels
 
 
@@ -22,6 +21,7 @@ def fit_single_gaussian_process(
     time_domain_training: np.ndarray,
     time_domain_sampled: np.ndarray,
     state_variable_sampled: np.ndarray,
+    config,
     gp_regularizer: float = 1e-8,
 ) -> gpkernels.GP_RBFW:
     """Fit a single Gaussian process (GP) to snapshot data for one variable.
@@ -69,9 +69,8 @@ def fit_gaussian_processes(
     time_domain_training: np.ndarray,
     time_domains_sampled: list[np.ndarray],
     snapshots_sampled: np.ndarray,
+    config,
     gp_regularizer: float = 1e-8,
-    # TODO - REMOVE
-    num_vars = None
 ) -> Iterable[gpkernels.GP_RBFW]:
     """Fit Gaussian Process (GP) regression models to the snapshot data,
     one state variable at a time.
@@ -87,36 +86,26 @@ def fit_gaussian_processes(
     snapshots_sampled : (num_variables, m) ndarray
         Observed training snapshots.
     """
-    if num_vars is None:
-        return [
-            fit_single_gaussian_process(
-                stateindex=stateindex,
-                time_domain_training=time_domain_training,
-                time_domain_sampled=time_domains_sampled[stateindex],
-                state_variable_sampled=snapshots_sampled[stateindex],
-                gp_regularizer=gp_regularizer,
-            )
-            for stateindex in range(config.NUMVARS) 
-        ]
-    else:
-        return [
-            fit_single_gaussian_process(
-                stateindex=stateindex,
-                time_domain_training=time_domain_training,
-                time_domain_sampled=time_domains_sampled[stateindex],
-                state_variable_sampled=snapshots_sampled[stateindex],
-                gp_regularizer=gp_regularizer,
-            )
-            for stateindex in range(num_vars) 
-        ]
+    return [
+        fit_single_gaussian_process(
+            stateindex=stateindex,
+            time_domain_training=time_domain_training,
+            time_domain_sampled=time_domains_sampled[stateindex],
+            state_variable_sampled=snapshots_sampled[stateindex],
+            config=config,
+            gp_regularizer=gp_regularizer,
+        )
+        for stateindex in range(config.NUMVARS) 
+    ]
 
 def torch_fit_single_gaussian_process(
     stateindex: int,
     time_domain_training: np.ndarray,
     time_domain_sampled: np.ndarray,
     state_variable_sampled: np.ndarray,
+    config,
     gp_regularizer: float = 1e-8,
-) -> gpkernels.TORCH_GP_RBFW:
+) -> gpkernels.TORCH_GP_COSINE_RBF:
     """Fit a single Gaussian process (GP) to snapshot data for one variable.
 
     Parameters
@@ -143,11 +132,11 @@ def torch_fit_single_gaussian_process(
     with opinf.utils.TimedBlock(
         f"\nfitting GP model for state '{config.DIMFMT(stateindex)}'\n"
     ):
-        gp = gpkernels.TORCH_GP_RBFW(
-            config.CONSTANT_VALUE_BOUNDS,
-            config.LENGTH_SCALE_BOUNDS,
-            config.NOISE_LEVEL_BOUNDS,
-            config.N_RESTARTS_OPTIMIZER,
+        gp = gpkernels.TORCH_GP_COSINE_RBF(
+            # config.CONSTANT_VALUE_BOUNDS,
+            # config.LENGTH_SCALE_BOUNDS,
+            # config.NOISE_LEVEL_BOUNDS,
+            # config.N_RESTARTS_OPTIMIZER,
         )
         gp.fit(time_domain_sampled, state_variable_sampled)
         print(gp)
@@ -162,8 +151,9 @@ def torch_fit_gaussian_processes(
     time_domain_training: np.ndarray,
     time_domains_sampled: list[np.ndarray],
     snapshots_sampled: np.ndarray,
+    config,
     gp_regularizer: float = 1e-8,
-) -> Iterable[gpkernels.TORCH_GP_RBFW]:
+) -> Iterable[gpkernels.TORCH_GP_COSINE_RBF]:
     """Fit Gaussian Process (GP) regression models to the snapshot data,
     one state variable at a time.
 
@@ -184,6 +174,7 @@ def torch_fit_gaussian_processes(
             time_domain_training=time_domain_training,
             time_domain_sampled=time_domains_sampled[stateindex],
             state_variable_sampled=snapshots_sampled[stateindex],
+            config=config,
             gp_regularizer=gp_regularizer,
         )
         for stateindex in range(config.NUMVARS)

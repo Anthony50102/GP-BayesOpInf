@@ -14,7 +14,6 @@ import scipy.optimize as opt
 import opinf
 
 import bayes
-import config
 import wlstsq
 
 
@@ -30,7 +29,7 @@ def _posterior_autoregularized_multisample(
     initial_conditions: np.ndarray,
     num_samples: int,
     lstsq_solver: wlstsq.WeightedLSTSQSolver,
-    model: config.Model,
+    model,
 ) -> bayes.BayesianODE:
     r"""Use an error-based optimization to select an appropriate regularization
     hyperparamter for the parameter estimation regression.
@@ -182,9 +181,8 @@ def _posterior_autoregularized_multisample(
 def estimate_posterior(
     gps,
     time_domain_prediction,
+    config,
     initial_conditions=None,
-    # TODO - REMOVE
-    model=None,
 ) -> bayes.BayesianODE:
     """Construct the posterior parameter distribution.
 
@@ -204,10 +202,7 @@ def estimate_posterior(
         Bayesian ODE model.
     """
     with opinf.utils.TimedBlock("constructing posterior hyperparameters\n"):
-        if model == None:
-            model = config.Model()
-        else:
-            model = model
+        model = config.Model()
         state_estimates = np.array([gp.state_estimate for gp in gps])
 
         # Construct the data matrix, RHS ddts vector, and weight matrix.
@@ -230,5 +225,5 @@ def estimate_posterior(
             initial_conditions=initial_conditions,
             num_samples=20,
             lstsq_solver=lstsq_solver,
-            model=model,
+            model=model
         )

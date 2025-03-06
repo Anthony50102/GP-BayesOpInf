@@ -5,7 +5,6 @@ import dataclasses
 import numpy as np
 import matplotlib.pyplot as plt
 
-import config
 import baseplots
 
 import opinf
@@ -44,6 +43,7 @@ class ODEPlotter(baseplots._BasePlotter):
     gp_stds: np.ndarray
     draws: list
     labels: list
+    config: object
 
     @property
     def num_states(self) -> int:
@@ -222,7 +222,7 @@ class ODEPlotter(baseplots._BasePlotter):
                 hf.create_dataset(attr, data=getattr(self, attr))
 
     @classmethod
-    def load(cls, loadfile: str):
+    def load(cls, loadfile: str, config: object):
         """Load plotting data from an HDF5 file."""
         data = {}
         with opinf.utils.hdf5_loadhandle(loadfile) as hf:
@@ -237,4 +237,4 @@ class ODEPlotter(baseplots._BasePlotter):
                 "draws",
             ):
                 data[attr] = hf[attr][:]
-        return cls(**data, labels=config.Model.LABELS)
+        return cls(**data, labels=config.Model.LABELS, config=config)

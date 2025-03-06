@@ -8,7 +8,7 @@ __all__ = [
 ]
 
 import numpy as np
-
+from config import *
 import ode_models as odes
 
 
@@ -41,3 +41,9 @@ class Model(odes.SEIRD2):
         return np.vstack(
             [data_dSdt, data_dEdt, data_dIdt, data_dRdt, data_dDdt]
         )
+
+NUMVARS = len(Model.LABELS)
+
+def DIMFMT(stateindex: int) -> str:
+    """String format for state variable index."""
+    return Model.LABELS[stateindex]

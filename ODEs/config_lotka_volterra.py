@@ -1,6 +1,8 @@
 import ode_models as odes
 import numpy as np
 
+from config import *
+
 alpha = 1.5
 beta = 1
 delta = 1
@@ -8,7 +10,9 @@ gamma = 3
 x0 = 1
 y0 = 1
 # TODO - Me thinks?
-true_parameters = np.array([1.5, 1.00, 1.0, 1.0, 3.00, 1.0, 1.0])
+time_domain = np.linspace(0, 20, 500)
+true_parameters = np.array([1.5, 1, 1, 1.0, 3, 1, 1]) # alpha, beta, delta, gamma, x0, y0
+initial_conditions = np.array([.994, .992])
 test_initial_conditions = np.array([.8,.8])
 
 class Model(odes.LotkaVolterra):
@@ -30,3 +34,9 @@ class Model(odes.LotkaVolterra):
         return np.vstack(
             [data_dSdt, data_dEdt]
         )
+
+NUMVARS = len(Model.LABELS)
+
+def DIMFMT(stateindex: int) -> str:
+    """String format for state variable index."""
+    return Model.LABELS[stateindex]
