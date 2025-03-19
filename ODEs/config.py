@@ -6,17 +6,6 @@ import time
 import logging
 import numpy as np
 
-from config_seird import (
-    time_domain,
-    initial_conditions,
-    test_initial_conditions,
-    Model,
-)
-
-
-NUMVARS = len(Model.LABELS)
-
-
 # Gaussian process kernel fitting hyperparameters -----------------------------
 CONSTANT_VALUE_BOUNDS = (1e-8, 1e5)
 LENGTH_SCALE_BOUNDS = (0.1, 100)
@@ -47,10 +36,6 @@ def NOISEFMT(level: float) -> str:
     """Label for datasets with noise percentage ``level``."""
     return "noise000" if not level else f"noise{int(level*100):0>3d}"
 
-
-def DIMFMT(stateindex: int) -> str:
-    """String format for state variable index."""
-    return Model.LABELS[stateindex]
 
 
 def _makefolder(*args) -> str:

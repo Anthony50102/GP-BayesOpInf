@@ -7,8 +7,6 @@ __all__ = [
 
 import numpy as np
 
-import config
-
 
 class TrajectorySampler:
     """Get sparse, noisy data for a several trajectories.
@@ -46,9 +44,11 @@ class TrajectorySampler:
         num_samples: int,
         noiselevel: float,
         num_regression_points: int,
+        config,
         synced: bool = True,
         integersonly: bool = False,
     ):
+        self.config=config
         """Set sampler configuration."""
         self.training_span = training_span
         self.num_samples = num_samples
@@ -61,7 +61,7 @@ class TrajectorySampler:
             num_regression_points,
         )
 
-        self.prediction_time_domain = config.time_domain
+        self.prediction_time_domain = self.config.time_domain
         self.integersonly = integersonly
 
         self.synced = synced
@@ -112,11 +112,11 @@ class TrajectorySampler:
         snapshots : (state_dimension, num_samples) ndarray
             Noisy snapshots observed over ``sample_time_domain``.
         """
-        X0 = config.initial_conditions
-        t_predict = config.time_domain
+        X0 = self.config.initial_conditions
+        t_predict = self.config.time_domain
 
         # Truth model.
-        model = config.Model()
+        model = self.config.Model()
         true_states = model.solve(X0, t_predict)
 
         # Noisy data.

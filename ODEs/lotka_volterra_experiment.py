@@ -7,12 +7,11 @@ import numpy as np
 import opinf
 
 import utils
-import config
+import config_lotka_volterra as config
 import step1_generate_data as step1
 import step2_fitgps as step2
 import step3_estimate as step3
 import step4_plot as step4
-
 
 def main(
     training_span: tuple[float, float],
@@ -66,7 +65,8 @@ def main(
         noiselevel=noiselevel,
         num_regression_points=num_regression_points,
         synced=False,
-        integersonly=True,
+        integersonly=False,
+        config=config
     )
 
     (
@@ -76,7 +76,6 @@ def main(
         time_domains_sampled,
         snapshots_sampled,
     ) = sampler.sample()
-
     true_parameters = np.copy(truthmodel.parameters)
 
     # Step 2: Fit Gaussian processes to data ----------------------------------
@@ -86,40 +85,31 @@ def main(
         num_regression_points,
     )
 
-    gps = step2.fit_gaussian_processes(
+    kernel = 'rq*cos'
+    np.save("lv_snapshots_sampled.npy", snapshots_sampled)
+    gps = step2.torch_fit_gaussian_processes(
         time_domain_training=time_domain_training,
         time_domains_sampled=time_domains_sampled,
         snapshots_sampled=snapshots_sampled,
         gp_regularizer=gp_regularizer,
+        config=config,
+        kernel = kernel
     )
-    gps_torch = step2.torch_fit_gaussian_processes(
-        time_domain_training=time_domain_training,
-        time_domains_sampled=time_domains_sampled,
-        snapshots_sampled=snapshots_sampled,
-        gp_regularizer=gp_regularizer,
-    )
-    print("GPs finished fitting")
-    print(f"Sklearn: {gps}")
-    print(f"Torch: {gps_torch}")
 
+   
     # Step 3: Construct the posterior hyperparameters -------------------------
     bayesian_model = step3.estimate_posterior(
         gps=gps,
         time_domain_prediction=time_domain_prediction,
-    )
-
-    torch_bayesian_model = step3.estimate_posterior(
-        gps=gps_torch,
-        time_domain_prediction=time_domain_prediction,
+        config=config
     )
 
     utils.summarize_posterior(true_parameters, bayesian_model)
-    # utils.summarize_posterior(true_parameters, torch_bayesian_model)
 
     # Draw samples from the posterior.
     ICs = true_states[:, 0]
     with opinf.utils.TimedBlock("\nsampling posterior distribution"):
-        draws = torch_bayesian_model.solution_posterior(
+        draws = bayesian_model.solution_posterior(
             initial_conditions=ICs,
             timepoints=time_domain_prediction,
             ndraws=ndraws,
@@ -127,12 +117,8 @@ def main(
 
     # Step 4: plot results ----------------------------------------------------
     gp_predictions = [gp.predict(time_domain_training) for gp in gps]
-    torch_gp_predictions = [gp.predict(time_domain_training) for gp in gps_torch]
-    gp_means = np.array([ms[0] for ms in gp_predictions])
-    torch_gp_means = np.array([ms.mean for ms in torch_gp_predictions])
-
-    gp_stds=np.array([ms[1] for ms in gp_predictions])
-    torch_stds = np.array([ms.stddev.numpy() for ms in torch_gp_predictions])
+    gp_means = np.array([ms.mean for ms in gp_predictions])
+    gp_stds=np.array([ms.stddev for ms in gp_predictions])
 
     plotter = step4.ODEPlotter(
         sampling_time_domain=time_domains_sampled,
@@ -140,10 +126,11 @@ def main(
         prediction_time_domain=time_domain_prediction,
         snapshots=snapshots_sampled,
         true_states=true_states,
-        gp_means = torch_gp_means,
-        gp_stds = torch_stds,
+        gp_means = gp_means,
+        gp_stds = gp_stds,
         draws=draws,
         labels=truthmodel.LABELS,
+        config=config
     )
 
     # If desired, export experimental data to HDF5 files for later.
@@ -162,7 +149,7 @@ def main(
         # Bayesian model performance.
         for k, flag in enumerate((True, False)):
             plotter.plot_posterior(individual=flag)
-            utils.save_figure(f"predict{k}.pdf", andopen=openonsave)
+            utils.save_figure(f"predict{k}_{kernel}.pdf", andopen=openonsave)
 
     # Prediction at different initial conditions.
     if config.test_initial_conditions is None:
@@ -173,7 +160,7 @@ def main(
         strict=True,
     )
     with opinf.utils.TimedBlock("sampling posterior distribution"):
-        draws = torch_bayesian_model.solution_posterior(
+        draws = bayesian_model.solution_posterior(
             initial_conditions=config.test_initial_conditions,
             timepoints=time_domain_prediction,
             ndraws=ndraws,
@@ -223,7 +210,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--gpreg",
         type=float,
-        default=5e-8,
+        # TODO - Maybe reduce this
+        default=5e-4,
         help="regularization for GP matrices (eta)",
     )
     parser.add_argument(

@@ -4,7 +4,7 @@
 set -e
 
 experiment() {
-    python3 main.py $@ --ndraws 600 --noopen
+    python3 seird_experiment.py $@ --ndraws 600 --noopen
 }
 
 # Noisy data.
@@ -17,4 +17,4 @@ experiment 120 010 .05 480 --exportto data/seird/ex2a
 experiment 060 010 .05 240 --exportto data/seird/ex2c
 experiment 090 010 .05 360 --exportto data/seird/ex2d
 
-python3 plots_paper.py
+python3 plots_paper.py seird

@@ -2,6 +2,7 @@
 """Plots used in the paper for the SEIRD numerical example."""
 
 import os
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mplpatches
@@ -219,7 +220,7 @@ def plot_solution(
 ):
     """Plot the model solutions."""
     plotters = [
-        step4.ODEPlotter.load(os.path.join(DATADIR, f"{pfx}_data.h5"))
+        step4.ODEPlotter.load(os.path.join(DATADIR, f"{pfx}_data.h5"), config=config)
         for pfx in prefixes
     ]
 
@@ -408,4 +409,11 @@ def paper():
 
 # =============================================================================
 if __name__ == "__main__":
+    config_arg = sys.argv[1]
+    if config_arg == 'seird':
+        import config_seird as config
+    elif config_arg == 'lotka_volterra':
+        import config_lotka_volterra as config
+    else:
+        raise ValueError("Incorred command line arguement for plot_paper.py")
     paper()
