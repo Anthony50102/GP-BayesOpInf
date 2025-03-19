@@ -143,6 +143,11 @@ class ManualCompositeKernel(ManualKernelBase):
     """
     def __init__(self, kernels, **kwargs):
         super().__init__(has_lengthscale=False, **kwargs)
+        print()
+        print()
+        print(kernels)
+        print()
+        print()
         self.kernels = torch.nn.ModuleList(kernels)
 
     def forward(self, x1, x2, diag=False, **params):
@@ -160,32 +165,142 @@ class ManualCompositeKernel(ManualKernelBase):
 # Kernel Composition Helper
 ###############################################################################
 
-def build_manual_kernel(kernel_str: str):
+###############################################################################
+# New Additive Manual Kernel
+###############################################################################
+
+class ManualSumKernel(ManualKernelBase):
     """
-    Build a composite manual kernel from a string.
-    The string should contain base tokens separated by '*' (e.g. "rbf*rq*cos").
+    Composite manual kernel that adds the covariances from several base manual kernels.
+    """
+    def __init__(self, kernels, **kwargs):
+        super().__init__(has_lengthscale=False, **kwargs)
+        self.kernels = torch.nn.ModuleList(kernels)
     
-    Supported tokens:
-      - "rbf": ManualRBFKernel
-      - "rq": ManualRQKernel
-      - "cos" or "periodic": ManualCosineKernel
+    def forward(self, x1, x2, diag=False, **params):
+        covar = None
+        for k in self.kernels:
+            current = k.compute_covariance(x1, x2)
+            covar = current if covar is None else covar + current
+        return torch.diag(covar) if diag else covar
+
+###############################################################################
+# Kernel Expression Parser and Builder
+###############################################################################
+
+class KernelParser:
+    """
+    A simple recursive descent parser for kernel expressions.
+    Supports identifiers (e.g. "rbf"), '+' (addition), '*' (multiplication),
+    and parentheses for grouping.
+    """
+    def __init__(self, s: str):
+        self.tokens = self.tokenize(s)
+        self.pos = 0
+    
+    def tokenize(self, s: str):
+        tokens = []
+        i = 0
+        while i < len(s):
+            if s[i].isspace():
+                i += 1
+            elif s[i] in '+*()':
+                tokens.append(s[i])
+                i += 1
+            else:
+                j = i
+                while j < len(s) and s[j].isalnum():
+                    j += 1
+                tokens.append(s[i:j].lower())
+                i = j
+        return tokens
+    
+    def current_token(self):
+        return self.tokens[self.pos] if self.pos < len(self.tokens) else None
+    
+    def consume(self, token: str):
+        if self.current_token() == token:
+            self.pos += 1
+        else:
+            raise ValueError(f"Expected token {token} but found {self.current_token()}")
+    
+    def parse_expression(self):
+        node = self.parse_term()
+        while self.current_token() == '+':
+            self.consume('+')
+            right = self.parse_term()
+            node = ('+', node, right)
+        return node
+    
+    def parse_term(self):
+        node = self.parse_factor()
+        while self.current_token() == '*':
+            self.consume('*')
+            right = self.parse_factor()
+            node = ('*', node, right)
+        return node
+    
+    def parse_factor(self):
+        token = self.current_token()
+        if token == '(':
+            self.consume('(')
+            node = self.parse_expression()
+            self.consume(')')
+            return node
+        else:
+            self.consume(token)
+            return token
+
+def build_kernel_from_tree(tree):
+    """
+    Recursively convert the parse tree into a kernel instance.
+    The tree nodes are either:
+      - A string: representing a base kernel (e.g., "rbf")
+      - A tuple: (operator, left, right)
     """
     token_to_class = {
         "rbf": ManualRBFKernel,
         "rq": ManualRQKernel,
         "cos": ManualCosineKernel,
-        "periodic": ManualCosineKernel
     }
-    tokens = kernel_str.lower().split("*")
-    kernels = []
-    for token in tokens:
-        if token not in token_to_class:
-            raise ValueError(f"Unknown kernel type: {token}")
-        kernels.append(token_to_class[token]())
-    if len(kernels) == 1:
-        return kernels[0]
+    
+    if isinstance(tree, str):
+        if tree not in token_to_class:
+            raise ValueError(f"Unknown kernel type: {tree}")
+        return token_to_class[tree]()
+    
+    elif isinstance(tree, tuple):
+        op, left, right = tree
+        left_kernel = build_kernel_from_tree(left)
+        right_kernel = build_kernel_from_tree(right)
+        if op == '+':
+            return ManualSumKernel([left_kernel, right_kernel])
+        elif op == '*':
+            return ManualCompositeKernel([left_kernel, right_kernel])
+        else:
+            raise ValueError(f"Unknown operator: {op}")
     else:
-        return ManualCompositeKernel(kernels)
+        raise ValueError("Invalid parse tree structure")
+
+def build_manual_kernel(kernel_str: str):
+    """
+    Build a composite manual kernel from a string expression.
+    
+    The string can include:
+      - Multiplication (e.g., "rbf*rq*cos")
+      - Addition (e.g., "rbf+cos")
+      - Grouping via parentheses (e.g., "rbf*(rq+cos)")
+    
+    Supported tokens:
+      - "rbf": ManualRBFKernel
+      - "rq": ManualRQKernel
+      - "cos": ManualCosineKernel
+    """
+    parser = KernelParser(kernel_str.lower())
+    tree = parser.parse_expression()
+    if parser.current_token() is not None:
+        raise ValueError("Unexpected token at the end of kernel string")
+    return build_kernel_from_tree(tree)
 
 ###############################################################################
 # Generic Exact GP Model
@@ -291,9 +406,9 @@ class TorchBaseGP(abc.ABC):
                                        kappa_zy: torch.Tensor,
                                        eta: float = 1e-8):
         L = torch.linalg.cholesky(K_yy)
-        y_unsq = self.y.unsqueeze(-1)
-        K_yy_inv_y = torch.cholesky_solve(y_unsq, L)
-        self.state_estimate = (kappa_zy @ K_yy_inv_y).squeeze(-1).detach().numpy().astype(np.float64)
+        y = (self.y - self.model.mean_module.constant).unsqueeze(-1)
+        K_yy_inv_y = torch.cholesky_solve(y, L)
+        self.state_estimate = self.model.mean_module.constant.detach().numpy() + (kappa_zy @ K_yy_inv_y).squeeze(-1).detach().numpy().astype(np.float64)
         self.ddt_estimate = (K_zy @ K_yy_inv_y).squeeze(-1).detach().numpy().astype(np.float64)
         K_zy_inv = torch.cholesky_solve(K_zy.T, L)
         ddt_covariance = K_zz - K_zy @ K_zy_inv

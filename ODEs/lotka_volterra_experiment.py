@@ -18,6 +18,7 @@ def main(
     num_samples: int,
     noiselevel: float,
     num_regression_points: int,
+    kernel:str,
     gp_regularizer: float = 1e-8,
     ndraws: int = 100,
     exportto: str = None,
@@ -85,8 +86,6 @@ def main(
         num_regression_points,
     )
 
-    kernel = 'rq*cos'
-    np.save("lv_snapshots_sampled.npy", snapshots_sampled)
     gps = step2.torch_fit_gaussian_processes(
         time_domain_training=time_domain_training,
         time_domains_sampled=time_domains_sampled,
@@ -144,12 +143,12 @@ def main(
     with opinf.utils.TimedBlock("\nplotting GP training fit\n"):
         # Gaussian process fit.
         plotter.plot_gp_training_fit(width=3)
-        utils.save_figure("train.pdf", andopen=openonsave)
+        utils.save_figure(f"train_{kernel.replace("*", "_")}.pdf", andopen=openonsave)
 
         # Bayesian model performance.
         for k, flag in enumerate((True, False)):
             plotter.plot_posterior(individual=flag)
-            utils.save_figure(f"predict{k}_{kernel}.pdf", andopen=openonsave)
+            utils.save_figure(f"predict{k}_{kernel.replace("*", "_")}.pdf", andopen=openonsave)
 
     # Prediction at different initial conditions.
     if config.test_initial_conditions is None:
@@ -167,7 +166,7 @@ def main(
         )
 
     fig = plotter.plot_posterior_newICs(draws, truth=test_trajectory)
-    utils.save_figure("newtrajectory.pdf", andopen=openonsave, fig=fig)
+    utils.save_figure(f"newtrajectory_{kernel.replace("*", "_")}.pdf", andopen=openonsave, fig=fig)
 
 
 # =============================================================================
@@ -208,6 +207,11 @@ if __name__ == "__main__":
         help="number of points to use in the OpInf regression0",
     )
     parser.add_argument(
+        "--kernel", "-k",
+        type=str,
+        default='rbf'
+    )
+    parser.add_argument(
         "--gpreg",
         type=float,
         # TODO - Maybe reduce this
@@ -236,6 +240,7 @@ if __name__ == "__main__":
         num_samples=args.num_samples,
         noiselevel=args.noiselevel,
         num_regression_points=args.num_regression_points,
+        kernel=args.kernel,
         gp_regularizer=args.gpreg,
         ndraws=args.ndraws,
         exportto=args.exportto,
