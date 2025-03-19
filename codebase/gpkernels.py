@@ -1,85 +1,223 @@
-# gpkernels.py
-"""Convenience classes for Gaussian process kernels."""
-
-__all__ = [
-    "GP_RBFW",
-    "TORCH_GP_RBFW"
-    "TORCH_GP_COSINE_RBF",
-]
-### TODO - Numerically determine now
+# gpykernels.py
+"""
+Convenience classes for Gaussian process kernels.
+This version provides a few base manual kernels (RBF, RQ, Cosine/Periodic) and
+allows you to define a composite kernel on the fly by passing a string, e.g. "rbf*rq*cos".
+"""
 
 import math
 import abc
-import joblib
 import numpy as np
-import scipy.linalg as la
-
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import (
-    ConstantKernel,
-    RBF,
-    WhiteKernel,
-)
-
-### New Imports
 import torch
-import numpy as np
 import gpytorch
 from gpytorch.models import ExactGP
 from gpytorch.likelihoods import GaussianLikelihood
 from gpytorch.means import ZeroMean, ConstantMean
-from gpytorch.kernels import ScaleKernel, RBFKernel, RQKernel, CosineKernel
+from gpytorch.kernels import Kernel
 
-class ExactGPModel(ExactGP):
-    def __init__(self, train_x, train_y, likelihood,
-                 constant_bounds=None, length_scale_bounds=None, noise_level_bounds=None):
-        super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
-        self.noise_level_bounds = noise_level_bounds
-        self.mean_module = ZeroMean()
-        # Here we use a ScaleKernel * RBFKernel plus a WhiteNoiseKernel to mimic
-        # k(t,t') = constant * exp(-(t-t')^2/(2*length_scale^2)) + noise_level δ(t-t')
-        if constant_bounds and length_scale_bounds:
-            self.covar_module = ScaleKernel(
-                RBFKernel(lengthscale_constraint=gpytorch.constraints.Interval(*length_scale_bounds)),
-                outputscale_constraint=gpytorch.constraints.Interval(*constant_bounds)
-            )
-        else:
-            self.covar_module = ScaleKernel(
-                RBFKernel(),
-            )
+###############################################################################
+# Base Class for Manual Kernels
+###############################################################################
+
+class ManualKernelBase(Kernel):
+    """
+    Base class for manual kernels.
+    Provides a common compute_covariance method and helper for input preparation.
+    """
+    def compute_covariance(self, x1, x2):
+        covar = self.forward(x1, x2)
+        if hasattr(covar, "evaluate"):
+            return covar.evaluate()
+        return covar
+
+    @staticmethod
+    def _prepare_input(x):
+        # If x is a 2D tensor with a single feature column, squeeze it.
+        if x.dim() == 2 and x.shape[1] == 1:
+            return x.squeeze(-1)
+        return x
+
+###############################################################################
+# Base Manual Kernels
+###############################################################################
+
+class ManualRBFKernel(ManualKernelBase):
+    """
+    Custom kernel implementing a standard RBF (Gaussian) kernel.
+    
+    k(x, x') = amplitude * exp(-((x - x')^2) / (2 * lengthscale^2))
+    """
+    def __init__(self, **kwargs):
+        super().__init__(has_lengthscale=False, **kwargs)
+        self.register_parameter("raw_outputscale", torch.nn.Parameter(torch.tensor(1.0)))
+        self.register_parameter("raw_lengthscale", torch.nn.Parameter(torch.tensor(1.0)))
+        self.register_constraint("raw_outputscale", gpytorch.constraints.Positive())
+        self.register_constraint("raw_lengthscale", gpytorch.constraints.Positive())
+    
+    def forward(self, x1, x2, diag=False, **params):
+        outputscale = self.raw_outputscale_constraint.transform(self.raw_outputscale)
+        lengthscale = self.raw_lengthscale_constraint.transform(self.raw_lengthscale)
+        
+        K = self.manual_rbf_kernel(x1, x2, amplitude=outputscale, lengthscale=lengthscale)
+        return torch.diag(K) if diag else K
+
+    @staticmethod
+    def manual_rbf_kernel(x, x_prime, amplitude, lengthscale):
+        x = ManualKernelBase._prepare_input(x)
+        x_prime = ManualKernelBase._prepare_input(x_prime)
+        diff = x.unsqueeze(1) - x_prime.unsqueeze(0)
+        rbf_part = torch.exp(-0.5 * (diff**2) / (lengthscale**2))
+        return amplitude * rbf_part
+
+
+class ManualRQKernel(ManualKernelBase):
+    """
+    Custom kernel implementing a Rational Quadratic kernel.
+    
+    k(x, x') = amplitude * (1 + (x - x')^2 / (2 * alpha * lengthscale^2))^(-alpha)
+    """
+    def __init__(self, **kwargs):
+        super().__init__(has_lengthscale=False, **kwargs)
+        self.register_parameter("raw_outputscale", torch.nn.Parameter(torch.tensor(1.0)))
+        self.register_parameter("raw_alpha", torch.nn.Parameter(torch.tensor(1.0)))
+        self.register_parameter("raw_lengthscale", torch.nn.Parameter(torch.tensor(1.0)))
+        self.register_constraint("raw_outputscale", gpytorch.constraints.Positive())
+        self.register_constraint("raw_alpha", gpytorch.constraints.Positive())
+        self.register_constraint("raw_lengthscale", gpytorch.constraints.Positive())
+    
+    def forward(self, x1, x2, diag=False, **params):
+        outputscale = self.raw_outputscale_constraint.transform(self.raw_outputscale)
+        alpha = self.raw_alpha_constraint.transform(self.raw_alpha)
+        lengthscale = self.raw_lengthscale_constraint.transform(self.raw_lengthscale)
+        
+        K = self.manual_rq_kernel(x1, x2, amplitude=outputscale, alpha=alpha, lengthscale=lengthscale)
+        return torch.diag(K) if diag else K
+
+    @staticmethod
+    def manual_rq_kernel(x, x_prime, amplitude, alpha, lengthscale):
+        x = ManualKernelBase._prepare_input(x)
+        x_prime = ManualKernelBase._prepare_input(x_prime)
+        diff = x.unsqueeze(1) - x_prime.unsqueeze(0)
+        diff_sq = diff.pow(2)
+        rq_part = (1.0 + diff_sq / (2.0 * alpha * lengthscale**2)).pow(-alpha)
+        return amplitude * rq_part
+
+
+class ManualCosineKernel(ManualKernelBase):
+    """
+    Custom kernel implementing a Cosine kernel (often used for periodic behavior).
+    
+    k(x, x') = amplitude * cos(pi*(x - x')/period)
+    """
+    def __init__(self, **kwargs):
+        super().__init__(has_lengthscale=False, **kwargs)
+        self.register_parameter("raw_outputscale", torch.nn.Parameter(torch.tensor(1.0)))
+        self.register_parameter("raw_period", torch.nn.Parameter(torch.tensor(1.0)))
+        self.register_constraint("raw_outputscale", gpytorch.constraints.Positive())
+        self.register_constraint("raw_period", gpytorch.constraints.Positive())
+    
+    def forward(self, x1, x2, diag=False, **params):
+        outputscale = self.raw_outputscale_constraint.transform(self.raw_outputscale)
+        period = self.raw_period_constraint.transform(self.raw_period)
+        
+        K = self.manual_cosine_kernel(x1, x2, amplitude=outputscale, period=period)
+        return torch.diag(K) if diag else K
+
+    @staticmethod
+    def manual_cosine_kernel(x, x_prime, amplitude, period):
+        x = ManualKernelBase._prepare_input(x)
+        x_prime = ManualKernelBase._prepare_input(x_prime)
+        diff = x.unsqueeze(1) - x_prime.unsqueeze(0)
+        cos_part = torch.cos(math.pi * diff / period)
+        return amplitude * cos_part
+
+###############################################################################
+# Composite Manual Kernel
+###############################################################################
+
+class ManualCompositeKernel(ManualKernelBase):
+    """
+    Composite manual kernel that multiplies several base manual kernels.
+    Instead of returning a gpytorch ProductKernel, it implements its own 
+    compute_covariance method by multiplying the covariances from each subkernel.
+    """
+    def __init__(self, kernels, **kwargs):
+        super().__init__(has_lengthscale=False, **kwargs)
+        self.kernels = torch.nn.ModuleList(kernels)
+
+    def forward(self, x1, x2, diag=False, **params):
+        covar = self.compute_covariance(x1, x2)
+        return torch.diag(covar) if diag else covar
+
+    def compute_covariance(self, x1, x2):
+        # Start with an all-ones matrix (multiplicative identity)
+        covar = torch.ones(x1.shape[0], x2.shape[0], device=x1.device, dtype=x1.dtype)
+        for k in self.kernels:
+            covar = covar * k.compute_covariance(x1, x2)
+        return covar
+
+###############################################################################
+# Kernel Composition Helper
+###############################################################################
+
+def build_manual_kernel(kernel_str: str):
+    """
+    Build a composite manual kernel from a string.
+    The string should contain base tokens separated by '*' (e.g. "rbf*rq*cos").
+    
+    Supported tokens:
+      - "rbf": ManualRBFKernel
+      - "rq": ManualRQKernel
+      - "cos" or "periodic": ManualCosineKernel
+    """
+    token_to_class = {
+        "rbf": ManualRBFKernel,
+        "rq": ManualRQKernel,
+        "cos": ManualCosineKernel,
+        "periodic": ManualCosineKernel
+    }
+    tokens = kernel_str.lower().split("*")
+    kernels = []
+    for token in tokens:
+        if token not in token_to_class:
+            raise ValueError(f"Unknown kernel type: {token}")
+        kernels.append(token_to_class[token]())
+    if len(kernels) == 1:
+        return kernels[0]
+    else:
+        return ManualCompositeKernel(kernels)
+
+###############################################################################
+# Generic Exact GP Model
+###############################################################################
+
+class GenericExactGP(ExactGP):
+    """
+    A generic ExactGP model that accepts a custom kernel and mean module.
+    """
+    def __init__(self, train_x, train_y, likelihood, mean_module=None, kernel=None):
+        super().__init__(train_x, train_y, likelihood)
+        self.mean_module = mean_module if mean_module is not None else ConstantMean()
+        self.covar_module = kernel if kernel is not None else ManualRBFKernel()
     
     def forward(self, x):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
-class ExactGPCosineRBF(ExactGP):
-    def __init__(self, train_x, train_y, likelihood,
-                 constant_bounds=None, length_scale_bounds=None, noise_level_bounds=None):
-        """
-        Gaussian Process model that uses the composite kernel
-            ScaleKernel( CosineKernel() * RQKernel() ).
-        If bounds are provided, the outputscale and RQ lengthscale are constrained.
-        """
-        super(ExactGPCosineRBF, self).__init__(train_x, train_y, likelihood)
-        self.mean_module = ConstantMean()
-        self.covar_module = ScaleKernel(CosineKernel()*RBFKernel())
- 
-    
-    def forward(self, x):
-        mean_x = self.mean_module(x)
-        covar_x = self.covar_module(x)
-        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+###############################################################################
+# Base GP Wrapper and TORCH_GP
+###############################################################################
 
-
-class TorchBaseGP(abc.ABC): 
-    """Base class for gpytorch Gaussian process regressor wrappers."""
+class TorchBaseGP(abc.ABC):
+    """
+    Base class for gpytorch Gaussian process regressor wrappers.
+    """
     def __init__(self):
         self.model = None
         self.likelihood = None
-        self.t_training = None  # training input (1D tensor)
-        self.y = None         # training target (1D tensor)
-        # These will be computed in compute_lstsq_matrices:
+        self.t_training = None  # training inputs (1D tensor)
+        self.y = None           # training targets (1D tensor)
         self.state_estimate = None
         self.ddt_estimate = None
         self.ddt_covariance = None
@@ -95,42 +233,35 @@ class TorchBaseGP(abc.ABC):
         # Store training data as tensors.
         self.t_training = torch.tensor(t_training, dtype=torch.float32)
         self.y = torch.tensor(training_data, dtype=torch.float32)
-        # Create likelihood with noise constraint and model.
-        self.likelihood = GaussianLikelihood(noise_constraint=gpytorch.constraints.Interval(*self.noise_level_bounds))
+        self.likelihood = GaussianLikelihood()
         # Note: the model expects inputs with an extra feature dimension.
         train_x = self.t_training.unsqueeze(-1)
         train_y = self.y
-        self.model = ExactGPModel(
+        # Create a GenericExactGP model with the provided (or default) kernel and mean.
+        self.model = GenericExactGP(
             train_x, train_y, self.likelihood,
-            # self.constant_bounds, self.length_scale_bounds, self.noise_level_bounds
-        )
-        # Removed redundant likelihood reassignment.
-        # Training mode.
+            mean_module=self.mean_module if hasattr(self, 'mean_module') else None,
+            kernel=self.kernel if hasattr(self, 'kernel') else None)
         self.model.train()
         self.likelihood.train()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=0.1)
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.likelihood, self.model)
-        for j in range(5):
-            for i in range(self.training_iter):
-                optimizer.zero_grad()
-                output = self.model(train_x)
-                loss = -mll(output, train_y)
-                loss.backward()
-                optimizer.step()
+        for i in range(self.training_iter):
+            optimizer.zero_grad()
+            output = self.model(train_x)
+            loss = -mll(output, train_y)
+            loss.backward()
+            optimizer.step()
         return self
 
     def predict(self, t):
-        # Ensure t is a tensor with shape (n,1)
-        t_tensor = (
-            torch.tensor(t, dtype=torch.float32).unsqueeze(-1)
-            if not torch.is_tensor(t) else t
-        )
+        t_tensor = torch.tensor(t, dtype=torch.float32).unsqueeze(-1) if not torch.is_tensor(t) else t
         self.model.eval()
         self.likelihood.eval()
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
             pred = self.likelihood(self.model(t_tensor))
-            # Attach .std for compatibility (sqrt of variance)
-            pred.std = pred.variance.sqrt()
+            # Attach .std for compatibility.
+            pred.std = pred.stddev
         return pred
 
     def prediction_bounds(self, t, kind="95%"):
@@ -148,31 +279,9 @@ class TorchBaseGP(abc.ABC):
             raise ValueError(kind)
         return mean - width, mean, mean + width
 
-    def __call__(self, t, tprime):
-        # Evaluate the kernel by calling the model's covariance module.
-        t_tensor = torch.tensor(t, dtype=torch.float32).unsqueeze(-1) if not torch.is_tensor(t) else t
-        tprime_tensor = torch.tensor(tprime, dtype=torch.float32).unsqueeze(-1) if not torch.is_tensor(tprime) else tprime
-        self.model.eval()
-        with torch.no_grad():
-            return self.model.covar_module(t_tensor, tprime_tensor).evaluate()
-
-    def save(self, save_path):
-        checkpoint = {
-            'model_state_dict': self.model.state_dict(),
-            'likelihood_state_dict': self.likelihood.state_dict(),
-            'training_iter': self.training_iter,
-        }
-        torch.save(checkpoint, save_path)
-
-    @staticmethod
-    def load(load_path):
-        # Loading functionality can be implemented as needed.
-        raise NotImplementedError("Loading not implemented for gpytorch version.")
-
     @abc.abstractmethod
     def compute_lstsq_matrices(self, t_est, **kwargs):
-        r"""Compute data needed for the GP-BayesOpInf least squares.
-        """
+        r"""Compute data needed for the GP-BayesOpInf least squares."""
         raise NotImplementedError
 
     def _compute_estimates_and_weights(self,
@@ -180,9 +289,9 @@ class TorchBaseGP(abc.ABC):
                                        K_zy: torch.Tensor,
                                        K_zz: torch.Tensor,
                                        kappa_zy: torch.Tensor,
-                                       eta: float = 1e-0):
+                                       eta: float = 1e-8):
         L = torch.linalg.cholesky(K_yy)
-        y_unsq = self.y.unsqueeze(-1)  # shape (m, 1)
+        y_unsq = self.y.unsqueeze(-1)
         K_yy_inv_y = torch.cholesky_solve(y_unsq, L)
         self.state_estimate = (kappa_zy @ K_yy_inv_y).squeeze(-1).detach().numpy().astype(np.float64)
         self.ddt_estimate = (K_zy @ K_yy_inv_y).squeeze(-1).detach().numpy().astype(np.float64)
@@ -190,682 +299,66 @@ class TorchBaseGP(abc.ABC):
         ddt_covariance = K_zz - K_zy @ K_zy_inv
         self.ddt_covariance = ddt_covariance
         C = ddt_covariance
-        # TODO - Remove
-        eta = 1e-0
         C_reg = C + eta * torch.eye(C.size(0), device=C.device, dtype=C.dtype)
         evals, evecs = torch.linalg.eigh(C_reg)
         if torch.any(evals <= 0):
-            print(evals.min())
             raise ValueError(f"inverse covariance not positive definite, increase eta...previous value {eta}")
         self.sqrtW = (evecs @ torch.diag(1.0 / torch.sqrt(evals)) @ evecs.T).detach().numpy().astype(np.float64)
 
 
-class TORCH_GP_RBFW(TorchBaseGP):
-    """Gaussian process regressor with a kernel of the form:
-
-        k(t, t') = constant * exp(-(t - t')^2 / (2 * length_scale^2)) + white_noise.
-
-    The white noise is modeled as an additive component.
-    This class mimics the interface of the sklearn wrapper.
+class TORCH_GP(TorchBaseGP):
     """
-    def __init__(self,
-                 constant_bounds=(1e-8, 1e5),
-                 length_scale_bounds=(.1, 100),
-                 noise_level_bounds=(1e-16, .5),
-                 training_iter=100):
+    Gaussian process regressor with a customizable kernel.
+    You can specify the kernel either by passing a kernel instance or a string.
+    For example: TORCH_GP(training_iter=100, kernel="rbf*rq*cos")
+    """
+    def __init__(self, training_iter=100, kernel=None, mean_module=None):
         super().__init__()
-        self.constant_bounds = constant_bounds
-        self.length_scale_bounds = length_scale_bounds
-        self.noise_level_bounds = noise_level_bounds
         self.training_iter = training_iter
-
-    @property
-    def constant(self):
-        self.model.eval()
-        if hasattr(self.model.covar_module, "kernels"):
-            return self.model.covar_module.kernels[0].outputscale
+        # Allow passing a custom kernel as an instance or via a string.
+        if isinstance(kernel, str):
+            self.kernel = build_manual_kernel(kernel)
         else:
-            return self.model.covar_module.outputscale
-
-    @property
-    def length_scale(self):
-        self.model.eval()
-        if hasattr(self.model.covar_module, "kernels"):
-            return self.model.covar_module.kernels[0].base_kernel.lengthscale
-        else:
-            return self.model.covar_module.base_kernel.lengthscale
-
-    @property
-    def noise_level(self):
-        self.model.eval()
-        noise = self.likelihood.noise
-        return noise.item() if torch.is_tensor(noise) else noise
+            self.kernel = kernel if kernel is not None else ManualRBFKernel()
+        # Optionally allow a custom mean module; default to ConstantMean.
+        self.mean_module = mean_module if mean_module is not None else ConstantMean()
 
     def __str__(self):
-        return "\n\t".join(
-            [
-                "Gaussian radial basis function kernel (gpytorch)",
-                r"k(t, t') = \sigma^2 exp(-(t - t')^2 / (2 \ell^2)) + \chi I",
-                rf"\sigma^2 = {float(self.constant):.4e}",
-                rf"\ell = {float(self.length_scale):.4e}",
-                rf"\chi = {float(self.noise_level):.4e}",
-            ]
-        )
+        return f"TORCH_GP with kernel: {self.kernel.__class__.__name__}"
 
-    def rbf_eval(self, t1, t2):
-        """Evaluate the RBF (squared exponential) part of the kernel.
-
-        kappa(t1, t2) = constant * exp( -(t1 - t2)^2 / (2 * length_scale^2) ).
-
-        Parameters
-        ----------
-        t1 : array-like, shape (m1,)
-        t2 : array-like, shape (m2,)
-
-        Returns
-        -------
-        Tensor of shape (m1, m2) with kernel evaluations.
-        """
-        t1 = torch.tensor(t1, dtype=torch.float32) if not torch.is_tensor(t1) else t1
-        t2 = torch.tensor(t2, dtype=torch.float32) if not torch.is_tensor(t2) else t2
-        tdiff = t1.unsqueeze(1) - t2.unsqueeze(0)
-        return self.constant * torch.exp(-(tdiff**2) / (2 * self.length_scale**2))
-
-    def compute_lstsq_matrices(self, t_est, eta=1e-0):
-        r"""Compute the data needed for the GP-BayesOpInf least squares.
-
-        This sets the following attributes:
-        - state_estimate: GP approximation of the state.
-        - ddt_estimate: GP approximation of the time derivative.
-        - sqrtW: Square root of the (regularized) inverse derivative covariance.
-
-        Parameters
-        ----------
-        t_est : array-like, shape (m',)
-            Time points at which to compute estimates.
-        eta : float, optional
-            Regularization constant.
-        """
-        # Evaluate the RBF kernel at training and estimation points.
-        rbf_yy = self.rbf_eval(self.t_training, self.t_training)  # (m, m)
-        rbf_zy = self.rbf_eval(t_est, self.t_training)             # (m', m)
-        rbf_zz = self.rbf_eval(t_est, t_est)                         # (m', m')
+    def compute_lstsq_matrices(self, t_est, eta):
         self.t_estimation = t_est
-
-        # Prepare tensor versions.
         t_est_tensor = torch.tensor(t_est, dtype=torch.float32) if not torch.is_tensor(t_est) else t_est
-        t_train_tensor = (
-            self.t_training if torch.is_tensor(self.t_training)
-            else torch.tensor(self.t_training, dtype=torch.float32)
-        )
+        t_est_tensor.requires_grad_()
+        t_train_tensor = self.t_training if torch.is_tensor(self.t_training) else torch.tensor(self.t_training, dtype=torch.float32)
+        kernel = self.model.covar_module
         
-        # Compute pairwise differences.
-        tprime_minus_tprime = t_est_tensor.unsqueeze(1) - t_est_tensor.unsqueeze(0)
-        tprime_minus_t = t_est_tensor.unsqueeze(1) - t_train_tensor.unsqueeze(0)
-        ell2 = self.length_scale ** 2
-        
-        # Add noise to the diagonal.
-        noise = self.noise_level
-        # If noise is a tensor, convert it to a scalar.
-        if torch.is_tensor(noise):
-            noise = noise.item()
-        K_yy = rbf_yy + torch.diag(torch.full((rbf_yy.size(0),), noise, 
-                                                dtype=rbf_yy.dtype, 
-                                                device=rbf_yy.device))
-        # First derivative
-        K_zy = -tprime_minus_t * rbf_zy / ell2
-        # Second derivative
-        K_zz = (1 - (tprime_minus_tprime ** 2 / ell2)) * rbf_zz / ell2
+        rbf_yy = kernel.compute_covariance(t_train_tensor, t_train_tensor)
+        rbf_zy = kernel.compute_covariance(t_est_tensor, t_train_tensor)
+        rbf_zz = kernel.compute_covariance(t_est_tensor, t_est_tensor)
 
+        def kernel_func(x1):
+            return kernel.compute_covariance(x1, t_train_tensor)
+        jacobian_K = torch.autograd.functional.jacobian(kernel_func, t_est_tensor)
+        dk_dx1_autograd = torch.zeros_like(rbf_zy)
+        for i in range(t_est_tensor.shape[0]):
+            dk_dx1_autograd[i, :] = jacobian_K[i, :, i]
+
+        mixed_derivs = torch.zeros_like(rbf_zz)
+        for i in range(t_est_tensor.shape[0]):
+            for j in range(t_est_tensor.shape[0]):
+                xi = t_est_tensor[i:i+1].clone().detach().requires_grad_(True)
+                yj = t_est_tensor[j:j+1].clone().detach().requires_grad_(True)
+                k_val = kernel.compute_covariance(xi, yj)
+                grad_x = torch.autograd.grad(k_val, xi, create_graph=True)[0]
+                mixed = torch.autograd.grad(grad_x, yj)[0]
+                mixed_derivs[i, j] = mixed
+
+        noise_val = self.model.likelihood.noise.item()
+        K_yy = rbf_yy + torch.diag(torch.full((rbf_yy.size(0),), noise_val,
+                                                dtype=rbf_yy.dtype,
+                                                device=rbf_yy.device))
+        K_zy = dk_dx1_autograd
+        K_zz = mixed_derivs
         self._compute_estimates_and_weights(K_yy, K_zy, K_zz, rbf_zy, eta)
         return self
-
-class TORCH_GP_COSINE_RBF(TorchBaseGP):
-    """Gaussian process regressor with a kernel of the form:
-
-        k(t, t') = constant * [CosineKernel(t,t') * RQKernel(t,t')] + white_noise
-
-    implemented as:
-
-        ScaleKernel(CosineKernel() * RQKernel())
-
-    The white noise is modeled as an additive component.
-    """
-    def __init__(self,
-                 constant_bounds=(1e-8, 1e5),
-                 length_scale_bounds=(.1, 100),
-                 noise_level_bounds=(1e-16, .5),
-                 training_iter=100):
-        super().__init__()
-        self.constant_bounds = constant_bounds
-        self.length_scale_bounds = length_scale_bounds
-        self.noise_level_bounds = noise_level_bounds
-        self.training_iter = training_iter
-
-    def fit(self, t_training, training_data):
-        # Store training data as tensors.
-        self.t_training = torch.tensor(t_training, dtype=torch.float32)
-        self.y = torch.tensor(training_data, dtype=torch.float32)
-        self.likelihood = GaussianLikelihood()
-        train_x = self.t_training.unsqueeze(-1)
-        train_y = self.y
-        np.save('train_x.npy', train_x.numpy())
-        np.save('train_y.npy', train_y.numpy())
-        # Use the new ExactGPModelCosineRQ
-        self.model = ExactGPCosineRBF(
-            train_x, train_y, self.likelihood,
-        )
-        self.model.train()
-        self.likelihood.train()
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=0.1)
-        mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.likelihood, self.model)
-        for i in range(500):
-                optimizer.zero_grad()
-                output = self.model(train_x)
-                loss = -mll(output, train_y)
-                loss.backward()
-                optimizer.step()
-        return self
-
-    @property
-    def constant(self):
-        self.model.eval()
-        return self.model.covar_module.outputscale
-
-    @property
-    def period_length(self):
-        self.model.eval()
-        # In the product kernel, the first kernel is the CosineKernel.
-        return self.model.covar_module.base_kernel.kernels[0].period_length
-
-    @property
-    def length_scale(self):
-        self.model.eval()
-        # The second kernel is the RQKernel.
-        return self.model.covar_module.base_kernel.kernels[1].lengthscale
-
-    # @property
-    # def alpha(self):
-    #     self.model.eval()
-    #     return self.model.covar_module.base_kernel.kernels[1].alpha
-
-    def __str__(self):
-        return "\n\t".join(
-            [
-                "Gaussian cosine * rational quadratic kernel (gpytorch)",
-                r"k(t, t') = \sigma^2 cos((t-t')/p) (1 + (t-t')^2/(2\alpha\ell^2))^{-\alpha} + \chi I",
-                rf"\sigma^2 = {float(self.constant):.4e}",
-                rf"p = {float(self.period_length):.4e}",
-                rf"\ell = {float(self.length_scale):.4e}",
-                # rf"\alpha = {float(self.alpha):.4e}",
-                rf"\chi = {float(self.noise_level):.4e}",
-            ]
-        )
-
-    def cosine_rq_eval(self, t1, t2):
-        """Evaluate the composite cosine * RQ kernel.
-
-        k(t, t') = constant * cos((t-t')/p) * (1 + (t-t')^2/(2*alpha*ell^2))^{-alpha}.
-
-        Parameters
-        ----------
-        t1 : array-like, shape (m1,)
-        t2 : array-like, shape (m2,)
-
-        Returns
-        -------
-        Tensor of shape (m1, m2) with kernel evaluations.
-        """
-        t1 = torch.tensor(t1, dtype=torch.float32) if not torch.is_tensor(t1) else t1
-        t2 = torch.tensor(t2, dtype=torch.float32) if not torch.is_tensor(t2) else t2
-        tdiff = t1.unsqueeze(1) - t2.unsqueeze(0)
-        A = self.constant
-        p = self.period_length
-        l = self.length_scale
-        alpha = self.alpha
-        u = 1 + (tdiff**2) / (2 * alpha * (l**2))
-        g = u**(-alpha)
-        return A * torch.cos(tdiff / p) * g
-
-    def compute_lstsq_matrices(self, t_est, eta=1e-2):
-        r"""Compute the data needed for the GP-BayesOpInf least squares.
-
-        This sets the following attributes:
-        - state_estimate: GP approximation of the state.
-        - ddt_estimate: GP approximation of the time derivative.
-        - sqrtW: Square root of the (regularized) inverse derivative covariance.
-
-        Parameters
-        ----------
-        t_est : array-like, shape (m',)
-            Time points at which to compute estimates.
-        eta : float, optional
-            Regularization constant.
-        """
-        self.t_estimation = t_est
-        # Use a small constant to avoid division by zero.
-        eps = 1e-6
-
-        # Compute kernel matrices (assumes model.covar_module is callable with two inputs)
-        torch_time_1 = self.t_training
-        t = torch.from_numpy(t_est).float()
-        k_yy = self.model.covar_module(torch_time_1, torch_time_1)  # shape: (m, m)
-        k_zy = self.model.covar_module(t, torch_time_1)             # shape: (m', m)
-        k_zz = self.model.covar_module(t, t)                         # shape: (m', m')
-
-        # Compute pairwise differences.
-        tprime_minus_tprime = t.unsqueeze(1) - t.unsqueeze(0)  # shape: (m', m')
-        tprime_minus_t      = t.unsqueeze(1) - torch_time_1.unsqueeze(0)  # shape: (m', m)
-
-        # Evaluate cosine and RBF kernel components and convert to dense tensors.
-        cos_zy = self.model.covar_module.base_kernel.kernels[0](t, torch_time_1).to_dense()
-        cos_zz = self.model.covar_module.base_kernel.kernels[0](t, t).to_dense()
-        rbf_zy = self.model.covar_module.base_kernel.kernels[1](t, torch_time_1).to_dense()
-        rbf_zz = self.model.covar_module.base_kernel.kernels[1](t, t).to_dense()
-
-        # Square of the lengthscale for the RBF kernel.
-        ell2 = self.model.covar_module.base_kernel.kernels[1].lengthscale ** 2
-
-        # Constants.
-        p = 3
-        a = p / torch.pi
-
-        # -------------------------
-        # First Derivative
-        # -------------------------
-        # For one-dimensional inputs, the elementwise norm is simply the absolute difference.
-        norm_tprime_minus_t = torch.norm(t.unsqueeze(1) - torch_time_1.unsqueeze(0)) + eps  # shape: (m', m)
-        k_prime_cos = -a * torch.sin(a * norm_tprime_minus_t) * tprime_minus_t / norm_tprime_minus_t
-        k_prime_rbf = -tprime_minus_t * rbf_zy / ell2
-        K_zy = k_prime_rbf * cos_zy + rbf_zy * k_prime_cos
-
-        # -------------------------
-        # Second Derivatives
-        # -------------------------
-        norm_tprime_minus_tprime = torch.norm(t.unsqueeze(1) - t.unsqueeze(0)) + eps  # shape: (m', m')
-        # Terms for the cosine second derivative.
-        term1 = a**2 * torch.cos(a * norm_tprime_minus_tprime) * (tprime_minus_tprime**2) / (norm_tprime_minus_tprime**2)
-        term2 = a * torch.sin(a * norm_tprime_minus_tprime) * torch.eye(tprime_minus_tprime.shape[0],
-                                                                        tprime_minus_tprime.shape[1],
-                                                                        device=tprime_minus_tprime.device,
-                                                                        dtype=tprime_minus_tprime.dtype) / norm_tprime_minus_tprime
-        term3 = -a * torch.sin(a * norm_tprime_minus_tprime) * (tprime_minus_tprime**2) / (norm_tprime_minus_tprime**3)
-        dx1dx2_k_cos = term1 + term2 + term3
-
-        # Terms for the RBF second derivative.
-        dx1dx2_k_rbf = (1 - (tprime_minus_tprime**2 / ell2)) * rbf_zz / ell2
-        dx2_k_rbf    = tprime_minus_tprime * rbf_zz / ell2
-        dx2_k_cos    = a * torch.sin(a * norm_tprime_minus_tprime) * tprime_minus_tprime / norm_tprime_minus_tprime
-
-        # Combined second derivative (using rbf_zz to ensure dimensions match)
-        K_zz = (
-            dx1dx2_k_rbf * cos_zz
-            + dx2_k_rbf * (-a * torch.sin(a * norm_tprime_minus_tprime) * tprime_minus_tprime / norm_tprime_minus_tprime)
-            - (tprime_minus_tprime * rbf_zz / ell2) * (a * torch.sin(a * norm_tprime_minus_tprime) * tprime_minus_tprime / norm_tprime_minus_tprime)
-            + rbf_zz * dx1dx2_k_cos
-        )
-
-        noise = self.model.likelihood.noise.item()
-        K_yy = k_yy + torch.diag(torch.full((k_yy.size(0),), noise, 
-                                            dtype=k_yy.dtype, 
-                                            device=k_yy.device))
-        self._compute_estimates_and_weights(K_yy.to_dense(), K_zy, K_zz, k_zy, eta)
-
-
-    @property
-    def noise_level(self):
-        self.model.eval()
-        noise = self.likelihood.noise
-        return noise.item() if torch.is_tensor(noise) else noise
-    
-class _BaseGP(abc.ABC):
-    """Base class for Gaussian process regressor wrappers."""
-
-    def __init__(self, kernel, n_restarts_optimizer, alpha=0):
-        """Initialize the underlying Gaussian process regressor."""
-        self.gpr = GaussianProcessRegressor(
-            kernel=kernel,
-            n_restarts_optimizer=n_restarts_optimizer,
-            alpha=alpha,
-        )
-
-    # Properties --------------------------------------------------------------
-    @property
-    def gpr(self):
-        """Underlying scikit-learn GaussianProcessRegressor."""
-        return self.__gpr
-
-    @gpr.setter
-    def gpr(self, gp):
-        """Ensure that the gpr a scikit-learn GaussianProcessRegressor."""
-        if not isinstance(gp, GaussianProcessRegressor):
-            raise TypeError("expected GaussianProcessRegressor object")
-        self.__gpr = gp
-
-    @property
-    def nsamples(self):
-        """Number of samples used to train the GP."""
-        if hasattr(self, "train_indices"):
-            return self.t_training.size
-
-    # Main routines -----------------------------------------------------------
-    def fit(self, t_training, training_data):
-        """Fit the (1D) Gaussian process to compressed snapshot data.
-
-        Parameters
-        ----------
-        t_snapshots : (nsamples,) ndarray
-            Time domain corresponding to the available training snapshots.
-        training_data : (nsamples,) ndarray
-            Available training snapshots for a single state variable.
-        """
-        if training_data.ndim > 1:
-            raise ValueError("GP training data must be one-dimensional")
-
-        # Fit the Gaussian process to the data.
-        self.t_training = t_training
-        self.y = training_data
-        self.gpr.fit(t_training[:, None], self.y)
-
-        return self
-
-    def predict(self, t):
-        """Predict with the trained Gaussian process.
-
-        Parameters
-        ----------
-        t : (m,) ndarray
-            Times at which to evaluate the GP.
-
-        Returns
-        -------
-        mean : (m,) ndarray
-            Mean GP prediction at each point.
-        std : (m,) ndarray
-            Standard deviation of the GP prediction at each point.
-        """
-        return self.gpr.predict(t[:, None], return_std=True)
-
-    def prediction_bounds(self, t, kind="95%"):
-        """Get prediction bounds.
-
-        Parameters
-        ----------
-        t : (m,) ndarray
-            Times at which to evaluate the GP.
-        kind : str
-            Type of prediction band to produce.
-            * "std": One standard deviation, mean ± std.
-            * "95%": 95% confidence interval, mean ± 1.96*std.
-            * "2std": Two standard deviations, mean ± 2*std.
-            * "3std": Three standard deviations, mean ± 3*std.
-
-        Returns
-        -------
-        lower : (m,) ndarray
-            Lower bound of the GP prediction at each point.
-        mean : (m,) ndarray
-            Mean GP prediction at each point.
-        upper : (m,) ndarray
-            Upper bound of the GP prediction at each point.
-        """
-        mean, std = self.predict(t)
-
-        if kind == "std":
-            width = std
-        elif kind == "95%":
-            width = 1.96 * std
-        elif kind == "2std":
-            width = 2 * std
-        elif kind == "3std":
-            width = 3 * std
-        else:
-            raise ValueError(kind)
-
-        return mean - width, mean, mean + width
-
-    def __call__(self, t, tprime):
-        """Evaluate the kernel.
-
-        Parameters
-        ----------
-        t : (m,) ndarray
-            First set of times at which to evaluate the GP.
-        tprime : (mprime,) ndarray
-            Second set of times at which to evaluate the GP.
-
-        Returns
-        -------
-        kernel(t, tprime) : (m, mprime) ndarray
-            Kernel evaluation.
-        """
-        return self.gpr.kernel_(t[:, None], tprime[:, None])
-
-    # Persistence -------------------------------------------------------------
-    def save(self, save_path):
-        """Save the GP regressor to a file with joblib."""
-        joblib.dump(self, save_path)
-
-    @staticmethod
-    def load(load_path):
-        """Load a GP regressor with joblib."""
-        return joblib.load(load_path)
-
-    # Abstract methods --------------------------------------------------------
-    @abc.abstractmethod
-    def compute_lstsq_matrices(self, t_est, **kwargs):
-        r"""Compute data needed for the GP-BayesOpInf least squares.
-
-        Parameters
-        ----------
-        t_est : (trainsize,) ndarray
-            Time domain at which to estimate states and time derivatives
-            for the parameter estimation.
-        """
-        raise NotImplementedError
-
-    def _compute_estimates_and_weights(
-        self,
-        K_yy: np.ndarray,
-        K_zy: np.ndarray,
-        K_zz: np.ndarray,
-        kappa_zy: np.ndarray,
-        eta: float = 1e-8,
-    ):
-        """Compute state and time derivative estimates from kernel matrices.
-
-        Parameters
-        ----------
-        K_yy : (m, m) ndarray
-            kappa(t, t) + noise * I
-        K_zy : (m', m) ndarray
-            d/d1 kappa(t', t)
-        K_zz : (m', m') ndarray
-            d^2/d1d2 kappa(t', t')
-        kappa_zy : (m', m) ndarray
-            Kernel evaluated at the estimation times and the training times.
-        eta : float >= 0
-            Regularization constant for the computation of the weight matrix.
-
-        Returns
-        -------
-        Nothing, but the following attributes are set:
-        * state_estimate : (m',) ndarray
-            Mean estimates for the state at the estimation times.
-        * ddt_estimate : (m',) ndarray
-            Mean estimates for the time derivatives at the estimation times.
-        * ddt_covariance : (m', m') ndarray
-            Covariance for the time derivatives at the estimation times.
-        * sqrtW : (m', m') ndarray
-            Approximate square root of the weight matrix W_zz.
-        """
-        # Cholesky factor K_yy since we need the action of inv(K_yy).
-        K_yy = la.cho_factor(K_yy, overwrite_a=True, check_finite=True)
-
-        # Compute the approximate state over the full time domain.
-        K_yy_inv_y = la.cho_solve(K_yy, self.y)
-        self.state_estimate = kappa_zy @ K_yy_inv_y
-
-        # Compute the approximate time derivative over the full time domain.
-        self.ddt_estimate = K_zy @ K_yy_inv_y
-
-        # Calculate covariance C = inv(W_zz) and stabilize for inversion.
-        _Kzyyyyz = K_zy @ la.cho_solve(K_yy, K_zy.T)
-        _Kzyyyyz = 0.5 * (_Kzyyyyz + _Kzyyyyz.T)  # Symmetrize.
-        self.ddt_covariance = C = K_zz - _Kzyyyyz
-
-        # Compute the sqrt(inv(C)) via truncated eigendecomposition.
-        C_evals, C_evecs = la.eigh(
-            C + (eta * np.eye(K_zz.shape[0])),
-            check_finite=False,
-        )
-        if np.any(C_evals <= 0):
-            raise ValueError(
-                "inverse covariance not positive definite, increase eta"
-            )
-        self.sqrtW = C_evecs @ np.diag(1 / np.sqrt(C_evals)) @ C_evecs.T
-
-
-class GP_RBFW(_BaseGP):
-    """Gaussian process regressor with the following kernel:
-
-    k(t, t') = constant * (RBF(t, t'; length_scale) + noise_level δ(|t - t'|)).
-
-    This class lightly wraps sklearn.gaussian_process.GaussianProcessRegressor.
-
-    Attributes
-    ----------
-    gpr : sklearn.gaussian_process.GaussianProcessRegressor
-    constant : float >= 0
-    length_scale : float >= 0
-    noise_level : float >= 0
-    train_indices : (m',) ndarray
-        Subset of full time domain used to fit GP, i.e., t' = t[train_indices].
-    y : (m',) ndarray
-        Training data for selecting GP hyperparameters.
-    """
-
-    def __init__(
-        self,
-        constant_bounds=(1e-5, 1e5),
-        length_scale_bounds=(1.5e-6, 0.002),
-        noise_level_bounds=(1e-14, 1e-10),
-        n_restarts_optimizer=50,
-    ):
-        """Initialize the underlying Gaussian process regressor.
-
-        Parameters
-        ----------
-        constant_bounds : pair of floats >=0 or "fixed"
-            The lower and upper bound on the constatn value. If set to
-            "fixed", the constant value is fixed at 1.0.
-        length_scale_bounds : pair of floats >= 0 or "fixed"
-            Lower and upper bound on 'length_scale' for the radial basis
-            function kernel RBf(t, t; length_scale).
-            If set to "fixed", 'length_scale' cannot be changed during
-            hyperparameter tuning.
-        noise_level_bounds : pair of floats >= 0 or "fixed"
-            Lower and upper bounds on 'noise_level' for the white noise kernel.
-            If set to "fixed", 'noise_level' cannot be changed during
-            hyperparameter tuning.
-        n_restarts_optimizer : int
-            Number of restarts of the optimizer for finding the kernel's
-            parameters which maximize the log-marginal likelihood.
-        """
-        # Kernel.
-        constant = ConstantKernel(1.0, constant_value_bounds=constant_bounds)
-        rbf = RBF(length_scale_bounds=length_scale_bounds)
-        white = WhiteKernel(noise_level_bounds=noise_level_bounds)
-        kernel = (constant * rbf) + white
-
-        # Regressor.
-        return _BaseGP.__init__(self, kernel, n_restarts_optimizer)
-
-    # Properties --------------------------------------------------------------
-    @property
-    def constant(self):
-        r"""This is :math:`\sigma^2` in the paper."""
-        return self.gpr.kernel_.k1.k1.constant_value
-
-    @property
-    def length_scale(self):
-        r"""This is :math:`\ell` in the paper."""
-        return self.gpr.kernel_.k1.k2.length_scale
-
-    @property
-    def noise_level(self):
-        r"""This is :math:`\chi` in the paper."""
-        return self.gpr.kernel_.k2.noise_level
-
-    def __str__(self):
-        """String representation: kernel form + list hyperparameters."""
-        return "\n\t".join(
-            [
-                "Gaussian radial basis function kernel",
-                r"k(t, t') = \sigma^2 exp(-(t - t')^2 / (2 \ell^2)) + \chi I",
-                rf"\sigma^2 = {self.constant:.4e}",
-                rf"\ell = {self.length_scale:.4e}",
-                rf"\chi = {self.noise_level:.4e}",
-            ]
-        )
-
-    # Main routines -----------------------------------------------------------
-    def rbf_eval(self, t1, t2):
-        """Evaluate the RBF (squared exponential) part of the kernel,
-
-            kappa(t1, t2) = sigma^2 exp( (-1/2) (t1 - t2)^2 / ell^2) )
-
-        Parameters
-        ----------
-        t1 : (m1,) ndarray
-            First set of times at which to evaluate the GP.
-        t2 : (m2,) ndarray
-            Second set of times at which to evaluate the GP.
-
-        Returns
-        -------
-        RBF(t1, t2; length_scale) : (m1, m2) ndarray
-            Kernel evaluation. The (i, j)-th entry is kappa(t1[i], t2[j]).
-        """
-        tdiff = t1[:, None] - t2
-        return self.constant * np.exp(-(tdiff**2) / (2 * self.length_scale**2))
-
-    # Mandatory implementation ------------------------------------------------
-    def compute_lstsq_matrices(self, t_est, eta=1e-8):
-        r"""Compute the data needed for the GP-BayesOpInf least squares.
-
-        This method sets the following attributes.
-        * state_estimate (y_tilde): GP approximation of the state q(t).
-        * ddt_estimate (z_tilde): GP approximation of the derivative dq/dt.
-        * sqrtW: Square root of (K_zz - K_zy inv(K_yy) K_yr)^{-1}.
-        # * yKinvy: y @ K^{-1} @ y, used for computing \sigma_{i}^{2}.
-
-        Parameters
-        ----------
-        t_est : (m',) ndarray
-            Time domain at which to estimate states and time derivatives
-            for the parameter estimation.
-        eta : float >= 0
-            Regularization constant for the computation of the weight matrix.
-        """
-        # Evaluate the radial basis function kernel.
-        rbf_yy = self.rbf_eval(self.t_training, self.t_training)  # m x m
-        rbf_zy = self.rbf_eval(t_est, self.t_training)  # m' x m
-        rbf_zz = self.rbf_eval(t_est, t_est)  # m' x m'
-        self.t_estimation = t_est
-
-        # Calculate the K matrices (uses derivatives of the RBF kernel).
-        tprime_minus_tprime = t_est[:, None] - t_est
-        tprime_minus_t = t_est[:, None] - self.t_training
-        ell2 = self.length_scale**2
-        K_yy = rbf_yy + np.diag(np.full(rbf_yy.shape[0], self.noise_level))
-        K_zy = -tprime_minus_t * rbf_zy / ell2
-        K_zz = (1 - (tprime_minus_tprime**2 / ell2)) * rbf_zz / ell2
-
-        return self._compute_estimates_and_weights(
-            K_yy,
-            K_zy,
-            K_zz,
-            rbf_zy,
-            eta,
-        )

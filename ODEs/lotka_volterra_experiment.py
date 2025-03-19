@@ -13,23 +13,6 @@ import step2_fitgps as step2
 import step3_estimate as step3
 import step4_plot as step4
 
-import ode_models as odes
-from config_lotka_volterra import Model
-from config_lotka_volterra import test_initial_conditions
-alpha = 1.5
-beta = 1
-delta = 1
-gamma = 3
-x0 = 1
-y0 = 1
-t = np.linspace(0, 20, 500)
-X0 = [x0, y0]
-
-lotkavolterra = odes.LotkaVolterra([alpha, beta, delta, gamma])
-solution = lotkavolterra.solve(initial_conditions=X0, timepoints=t)
-noise_solution = lotkavolterra.noise(solution, 0.10)
-
-
 def main(
     training_span: tuple[float, float],
     num_samples: int,
@@ -93,24 +76,7 @@ def main(
         time_domains_sampled,
         snapshots_sampled,
     ) = sampler.sample()
-
     true_parameters = np.copy(truthmodel.parameters)
-    print(type(truthmodel), time_domain_prediction.shape, true_states.shape, np.array(time_domains_sampled).shape, np.array(snapshots_sampled).shape)
-    # lv_training_span = (0,15)
-    # lv_regression_points = 400 
-    # lv_truthmodel, lv_true_states, lv_time_domains_sampled, lv_snapshots_sampled = Model(), solution, np.repeat(np.expand_dims(t[:375], axis=0), repeats=2 ,axis=0), noise_solution[:,:375]
-    # lv_true_parameters = np.copy(lv_truthmodel.parameters)
-
-    # Truth Model: Whatever model for creating data
-    # Time Domain predictions: The numpy array of all time steps i.e. np.linspace(0,200,500)
-    # True States: Model solutions at each time step in Time Domain predictions i.e. shape = (5,500)
-    # Time Domains Sampled: Whatever sample of the time domains are being chosen i.e. noisy training shape = (5,120), or i.e. spares shape (5,10)
-    # Snapshots Sampled: Coresspoding truth values at Time Domains sampled (same shape)
-
-    # TODO - Check if this is the correct sampling
-    # print(type(lv_truthmodel), t.shape, lv_true_states.shape, lv_time_domains_sampled.shape, lv_snapshots_sampled.shape)
-
-    # Training span: The range in which the training data spans i.e (0,60)
 
     # Step 2: Fit Gaussian processes to data ----------------------------------
     time_domain_training = np.linspace(
@@ -118,43 +84,19 @@ def main(
         training_span[-1],
         num_regression_points,
     )
-    # lv_time_domain_training = np.linspace(
-    #     lv_training_span[0],
-    #     lv_training_span[-1],
-    #     lv_regression_points 
-    # )
-    # Time domain training: Points at which to create the time derivative and state computations for parameter estimation
-    print(time_domain_training.shape)
-    # print(lv_time_domain_training.shape)
 
+    kernel = 'rq*cos'
+    np.save("lv_snapshots_sampled.npy", snapshots_sampled)
     gps = step2.torch_fit_gaussian_processes(
         time_domain_training=time_domain_training,
         time_domains_sampled=time_domains_sampled,
         snapshots_sampled=snapshots_sampled,
         gp_regularizer=gp_regularizer,
-        config=config
+        config=config,
+        kernel = kernel
     )
 
-    # lv_gps = step2.torch_fit_gaussian_processes(
-    #     time_domain_training=lv_time_domain_training,
-    #     time_domains_sampled=lv_time_domains_sampled,
-    #     snapshots_sampled=lv_snapshots_sampled,
-    #     gp_regularizer=gp_regularizer,
-    #     num_vars=2
-    # )
-
-    # import matplotlib.pyplot as plt
-    # lv_preds = lv_gps[0].predict(lv_time_domain_training).mean
-    # print(lv_preds[0].shape)
-    # plt.plot(lv_time_domain_training, lv_preds)
-    # plt.savefig("lv_save.png")
-    # plt.show()
-
-    # preds = gps[0].predict(time_domain_training)
-    # plt.plot(time_domain_training, preds[0])
-    # plt.savefig("save.png")
-
-    
+   
     # Step 3: Construct the posterior hyperparameters -------------------------
     bayesian_model = step3.estimate_posterior(
         gps=gps,
@@ -162,11 +104,6 @@ def main(
         config=config
     )
 
-    # lv_bayesian_model = step3.estimate_posterior(
-    #     gps=lv_gps,
-    #     time_domain_prediction=t,
-    #     model=lv_truthmodel
-    # )
     utils.summarize_posterior(true_parameters, bayesian_model)
 
     # Draw samples from the posterior.
@@ -182,8 +119,6 @@ def main(
     gp_predictions = [gp.predict(time_domain_training) for gp in gps]
     gp_means = np.array([ms.mean for ms in gp_predictions])
     gp_stds=np.array([ms.stddev for ms in gp_predictions])
-
-    print(np.array(gp_means).shape)
 
     plotter = step4.ODEPlotter(
         sampling_time_domain=time_domains_sampled,
@@ -214,7 +149,7 @@ def main(
         # Bayesian model performance.
         for k, flag in enumerate((True, False)):
             plotter.plot_posterior(individual=flag)
-            utils.save_figure(f"predict{k}.pdf", andopen=openonsave)
+            utils.save_figure(f"predict{k}_{kernel}.pdf", andopen=openonsave)
 
     # Prediction at different initial conditions.
     if config.test_initial_conditions is None:
@@ -275,7 +210,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--gpreg",
         type=float,
-        default=5e-8,
+        # TODO - Maybe reduce this
+        default=5e-4,
         help="regularization for GP matrices (eta)",
     )
     parser.add_argument(
