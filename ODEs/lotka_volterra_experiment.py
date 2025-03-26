@@ -2,6 +2,8 @@
 """Do a single numerical experiment from start to finish."""
 
 import os
+import itertools
+import math
 import numpy as np
 
 import opinf
@@ -23,6 +25,7 @@ def main(
     ndraws: int = 100,
     exportto: str = None,
     openonsave: bool = True,
+    ensemble: bool = False,
 ):
     r"""Do a single trial from start to finish (do not save intermediate data).
 
@@ -86,22 +89,66 @@ def main(
         num_regression_points,
     )
 
-    gps = step2.torch_fit_gaussian_processes(
-        time_domain_training=time_domain_training,
-        time_domains_sampled=time_domains_sampled,
-        snapshots_sampled=snapshots_sampled,
-        gp_regularizer=gp_regularizer,
-        config=config,
-        kernel = kernel
-    )
+    if ensemble == True:
+        kernels = ['cos', 'rbf', 'rq']
+        operators = ['+', '*']
+        combinations = []
+        # For each possible number of kernels (1 to len(kernels))
+        for r in range(1, len(kernels) + 1):
+            # Generate all orderings (permutations) of r kernels from the list.
+            for perm in itertools.permutations(kernels, r):
+                # If there's only one kernel, just add it.
+                if r == 1:
+                    combinations.append(perm[0])
+                else:
+                    # For each placement of operators between the kernels.
+                    for ops in itertools.product(operators, repeat=r-1):
+                        expr = perm[0]
+                        for op, ker in zip(ops, perm[1:]):
+                            expr += op + ker
+                        combinations.append(expr)
 
-   
-    # Step 3: Construct the posterior hyperparameters -------------------------
-    bayesian_model = step3.estimate_posterior(
-        gps=gps,
-        time_domain_prediction=time_domain_prediction,
-        config=config
-    )
+        # Print the list of generated combinations
+        min_error = math.inf
+        for combo in combinations:
+                gps = step2.torch_fit_gaussian_processes(
+                    time_domain_training=time_domain_training,
+                    time_domains_sampled=time_domains_sampled,
+                    snapshots_sampled=snapshots_sampled,
+                    gp_regularizer=gp_regularizer,
+                    config=config,
+                    kernel = combo
+                )
+
+            
+                # Step 3: Construct the posterior hyperparameters -------------------------
+                error , bayesian_model = step3.estimate_posterior(
+                    gps=gps,
+                    time_domain_prediction=time_domain_prediction,
+                    config=config
+                )
+                if error < min_error:
+                    min_kernel = combo
+                    min_error = error
+        print(f"Ensemble modeling has found best model to be: {min_kernel} with a error of {min_error}")
+
+    else:
+        gps = step2.torch_fit_gaussian_processes(
+            time_domain_training=time_domain_training,
+            time_domains_sampled=time_domains_sampled,
+            snapshots_sampled=snapshots_sampled,
+            gp_regularizer=gp_regularizer,
+            config=config,
+            kernel = kernel
+        )
+
+    
+        # Step 3: Construct the posterior hyperparameters -------------------------
+        error , bayesian_model = step3.estimate_posterior(
+            gps=gps,
+            time_domain_prediction=time_domain_prediction,
+            config=config
+        )
 
     utils.summarize_posterior(true_parameters, bayesian_model)
 
@@ -233,6 +280,10 @@ if __name__ == "__main__":
         action="store_true",
         help="do not open figures automatically",
     )
+    parser.add_argument(
+        "--ensemble",
+        action='store_true'
+    )
 
     args = parser.parse_args()
     main(
@@ -245,4 +296,5 @@ if __name__ == "__main__":
         ndraws=args.ndraws,
         exportto=args.exportto,
         openonsave=not args.noopen,
+        ensemble=args.ensemble
     )
