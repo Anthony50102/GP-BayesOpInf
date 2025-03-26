@@ -9,11 +9,11 @@ experiment() {
 
 # Noisy data.
 # experiment 004 15 .1 300 --exportto data/lotka_volterra/ex1a  -k 'rbf' # span samples noise regression points
-experiment 004 10 .1 300 --exportto data/lotka_volterra/ex1a  -k 'rq' # span samples noise regression points
+experiment 004 15 .05 300 --exportto data/lotka_volterra/ex1a  -k 'rq' # span samples noise regression points
 # experiment 004 15 .1 300 --exportto data/lotka_volterra/ex1a  -k 'rbf*cos' # span samples noise regression points
-experiment 004 10 .1 300 --exportto data/lotka_volterra/ex1a  -k 'cos' # span samples noise regression points
-experiment 004 10 .1 300 --exportto data/lotka_volterra/ex1a  -k 'rq*cos' # span samples noise regression points
-experiment 004 10 .1 300 --exportto data/lotka_volterra/ex1a  -k 'rq+cos' # span samples noise regression points
+# experiment 004 10 .1 300 --exportto data/lotka_volterra/ex1a  -k 'cos' # span samples noise regression points
+# experiment 004 10 .1 300 --exportto data/lotka_volterra/ex1a  -k 'rq*cos' # span samples noise regression points
+# experiment 004 10 .1 300 --exportto data/lotka_volterra/ex1a  -k 'rq+cos' # span samples noise regression points
 # experiment 060 060 .10 240 --exportto data/seird/ex1c
 # experiment 120 120 .10 480 --exportto data/seird/ex1d
 

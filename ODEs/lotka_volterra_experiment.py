@@ -97,11 +97,19 @@ def main(
 
    
     # Step 3: Construct the posterior hyperparameters -------------------------
-    bayesian_model = step3.estimate_posterior(
-        gps=gps,
-        time_domain_prediction=time_domain_prediction,
-        config=config
-    )
+    if (True):
+        from quantile_step3 import estimate_posterior
+        bayesian_model = estimate_posterior(
+            gps=gps,
+            time_domain_prediction=time_domain_prediction,
+            config=config
+            )
+    else:
+        bayesian_model = step3.estimate_posterior(
+            gps=gps,
+            time_domain_prediction=time_domain_prediction,
+            config=config
+        )
 
     utils.summarize_posterior(true_parameters, bayesian_model)
 
