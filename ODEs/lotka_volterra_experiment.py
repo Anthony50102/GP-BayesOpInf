@@ -97,7 +97,7 @@ def main(
 
    
     # Step 3: Construct the posterior hyperparameters -------------------------
-    if (True):
+    if (False):
         from quantile_step3 import estimate_posterior
         bayesian_model = estimate_posterior(
             gps=gps,

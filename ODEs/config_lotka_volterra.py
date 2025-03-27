@@ -4,11 +4,11 @@ import numpy as np
 from config import *
 
 alpha = 1.5#1.5
-beta = 1 #1
-delta = 1 #1
-gamma = 3 #3
-x0 = 1
-y0 = 1
+beta = .5 #1
+delta = 3.5 #1
+gamma = .5 #3
+x0 = 3 #1
+y0 = 5 #1
 # TODO - Me thinks?
 time_domain = np.linspace(0, 20, 500)
 # true_parameters = np.array([1.5, 1, 1, 1.0, 3, 1, 1]) # alpha, beta, delta, gamma, x0, y0
