@@ -342,7 +342,7 @@ class TorchBaseGP(abc.ABC):
     def nsamples(self):
         return self.t_training.size(0) if self.t_training is not None else 0
 
-    def fit(self, t_training, training_data):
+    def fit(self, t_training, training_data, error: bool = False):
         if training_data.ndim > 1:
             raise ValueError("GP training data must be one-dimensional")
         # Store training data as tensors.
@@ -367,7 +367,9 @@ class TorchBaseGP(abc.ABC):
             loss = -mll(output, train_y)
             loss.backward()
             optimizer.step()
-        return self
+
+        ret_val = self if not error else loss.item()
+        return ret_val
 
     def predict(self, t):
         t_tensor = torch.tensor(t, dtype=torch.float32).unsqueeze(-1) if not torch.is_tensor(t) else t

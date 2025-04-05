@@ -11,6 +11,7 @@ def torch_fit_single_gaussian_process(
     config,
     kernel: str = 'rbf',
     gp_regularizer: float = 1e-8,
+    return_error: bool = False
 ) -> TORCH_GP:
     """Fit a single Gaussian process (GP) to snapshot data for one variable.
 
@@ -46,13 +47,13 @@ def torch_fit_single_gaussian_process(
             # config.NOISE_LEVEL_BOUNDS,
             # config.N_RESTARTS_OPTIMIZER,
         )
-        gp.fit(time_domain_sampled, state_variable_sampled)
+        error = gp.fit(time_domain_sampled, state_variable_sampled, error=return_error)
         print(gp)
 
     with opinf.utils.TimedBlock("computing weight matrix", timelimit=600):
         gp.compute_lstsq_matrices(time_domain_training, eta=gp_regularizer)
 
-    return gp
+    return gp, error
 
 
 def torch_fit_gaussian_processes(
@@ -61,7 +62,8 @@ def torch_fit_gaussian_processes(
     snapshots_sampled: np.ndarray,
     config,
     gp_regularizer: float = 1e-8,
-    kernel: str = 'rbf'
+    kernel: str = 'rbf',
+    return_error: bool = False
 ) -> Iterable[TORCH_GP]:
     """Fit Gaussian Process (GP) regression models to the snapshot data,
     one state variable at a time.
@@ -77,7 +79,7 @@ def torch_fit_gaussian_processes(
     snapshots_sampled : (num_variables, m) ndarray
         Observed training snapshots.
     """
-    return [
+    ret_val = [
         torch_fit_single_gaussian_process(
             stateindex=stateindex,
             time_domain_training=time_domain_training,
@@ -88,4 +90,26 @@ def torch_fit_gaussian_processes(
             kernel=kernel
         )
         for stateindex in range(config.NUMVARS)
-    ]
+    ] if not return_error else [torch_fit_single_gaussian_process(
+            stateindex=stateindex,
+            time_domain_training=time_domain_training,
+            time_domain_sampled=time_domains_sampled[stateindex],
+            state_variable_sampled=snapshots_sampled[stateindex],
+            config=config,
+            gp_regularizer=gp_regularizer,
+            kernel=kernel,
+            return_error=True) for stateindex in range(config.NUMVARS)] 
+    
+    return ret_val
+    # return [
+    #     torch_fit_single_gaussian_process(
+    #         stateindex=stateindex,
+    #         time_domain_training=time_domain_training,
+    #         time_domain_sampled=time_domains_sampled[stateindex],
+    #         state_variable_sampled=snapshots_sampled[stateindex],
+    #         config=config,
+    #         gp_regularizer=gp_regularizer,
+    #         kernel=kernel
+    #     )
+    #     for stateindex in range(config.NUMVARS)
+    # ]

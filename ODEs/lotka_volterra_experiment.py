@@ -5,6 +5,7 @@ import os
 import itertools
 import math
 import numpy as np
+import matplotlib.pyplot as plt
 
 import opinf
 
@@ -52,6 +53,15 @@ def main(
     openonsave : bool
         If ``True`` (default), open figures as they are created.
     """
+    custom_save = f"{custom_save}/{num_samples}_{noiselevel}"
+    try:
+        os.makedirs(custom_save)
+        print(f"Created directory at: {custom_save}")
+    except FileExistsError:
+    # directory already exists
+        print(f"Directory already exists at: {custom_save}")
+        pass
+
     # Report on experimental scenario.
     utils.summarize_experiment(
         training_span=training_span,
@@ -110,28 +120,52 @@ def main(
                         combinations.append(expr)
 
         # Print the list of generated combinations
-        min_error = math.inf
+        min_posterior_error = math.inf
+        gp_mll_errors = []
+        posterior_erros = []
         for combo in combinations:
-                gps = step2.torch_fit_gaussian_processes(
+                fitted_gps = step2.torch_fit_gaussian_processes(
                     time_domain_training=time_domain_training,
                     time_domains_sampled=time_domains_sampled,
                     snapshots_sampled=snapshots_sampled,
                     gp_regularizer=gp_regularizer,
                     config=config,
-                    kernel = combo
+                    kernel = combo,
+                    return_error=True
                 )
+                print(fitted_gps)
+                errors = [result[1] for result in fitted_gps]
+                gps = [result[0] for result in fitted_gps]
+                gp_mll_errors.append(tuple(errors))
 
             
                 # Step 3: Construct the posterior hyperparameters -------------------------
-                error , bayesian_model = step3.estimate_posterior(
+                post_error , bayesian_model = step3.estimate_posterior(
                     gps=gps,
                     time_domain_prediction=time_domain_prediction,
                     config=config
                 )
-                if error < min_error:
+                posterior_erros.append(post_error)
+
+                if post_error < min_posterior_error:
                     min_kernel = combo
-                    min_error = error
-        print(f"Ensemble modeling has found best model to be: {min_kernel} with a error of {min_error}")
+                    min_posterior_error = post_error
+                    mll_for_min_post_error = errors
+                if len(gp_mll_errors) == 5:
+                    break
+        print(f"Ensemble modeling has found best model to be: {min_kernel} with a posterior error of {min_posterior_error} and a mll error of {mll_for_min_post_error}")
+        print(gp_mll_errors)
+        for i in range(len(gp_mll_errors[0])):
+            errs = []
+            for tup in gp_mll_errors:
+                print(tup[i])
+                errs.append(tup[i]) 
+            # gp_mll_errors = [tup[i] for tup in gp_mll_errors]
+            plt.scatter(errs, posterior_erros)
+            plt.savefig(f"{custom_save}/mll_vs_post_error_index{i}.png")
+            plt.clf()
+        # Create the plot for the mll errors vs poster erros
+        
 
     else:
         gps = step2.torch_fit_gaussian_processes(
@@ -192,17 +226,17 @@ def main(
         # Gaussian process fit.
         plotter.plot_gp_training_fit(width=3)
         if custom_save != "none":
-            utils.save_figure_to_dir(f"train_{kernel.replace("*", "_")}.pdf", andopen=openonsave, dir=custom_save)
+            utils.save_figure_to_dir(f"train_{kernel.replace('*', '_')}.pdf", andopen=openonsave, dir=custom_save)
         else:
-            utils.save_figure(f"train_{kernel.replace("*", "_")}.pdf", andopen=openonsave)
+            utils.save_figure(f"train_{kernel.replace('*', '_')}.pdf", andopen=openonsave)
 
         # Bayesian model performance.
         for k, flag in enumerate((True, False)):
             plotter.plot_posterior(individual=flag)
             if custom_save != "none":
-                utils.save_figure_to_dir(f"predict{k}_{kernel.replace("*", "_")}.pdf", andopen=openonsave, dir=custom_save)
+                utils.save_figure_to_dir(f"predict{k}_{kernel.replace('*', '_')}.pdf", andopen=openonsave, dir=custom_save)
             else:
-                utils.save_figure(f"predict{k}_{kernel.replace("*", "_")}.pdf", andopen=openonsave)
+                utils.save_figure(f"predict{k}_{kernel.replace('*', '_')}.pdf", andopen=openonsave)
 
     # Prediction at different initial conditions.
     if config.test_initial_conditions is None:
@@ -221,9 +255,9 @@ def main(
 
     fig = plotter.plot_posterior_newICs(draws, truth=test_trajectory)
     if custom_save != "none":
-        utils.save_figure_to_dir(f"newtrajectory_{kernel.replace("*", "_")}.pdf", andopen=openonsave, fig=fig, dir=custom_save)
+        utils.save_figure_to_dir(f"newtrajectory_{kernel.replace('*', '_')}.pdf", andopen=openonsave, fig=fig, dir=custom_save)
     else:
-        utils.save_figure(f"newtrajectory_{kernel.replace("*", "_")}.pdf", andopen=openonsave, fig=fig)
+        utils.save_figure(f"newtrajectory_{kernel.replace('*', '_')}.pdf", andopen=openonsave, fig=fig)
 
 
 # =============================================================================

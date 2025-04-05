@@ -95,6 +95,7 @@ def save_figure_to_dir(figname, dir, andopen=False, fig=None):
     if fig is None:
         fig = plt.gcf()
     save_path = os.path.join(dir, figname)
+    print(f"Save path: {save_path}")
 
     with opinf.utils.TimedBlock(f"Saving {save_path}"):
         fig.savefig(save_path, bbox_inches="tight", pad_inches=0.001, dpi=250)
