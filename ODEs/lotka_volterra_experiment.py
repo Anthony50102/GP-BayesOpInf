@@ -153,8 +153,6 @@ def main(
                     mll_for_min_post_error = errors
                     best_bayesian = bayesian_model
                     best_gps = gps
-                if len(gp_mll_errors) == 5:
-                    break
         print(f"Ensemble modeling has found best model to be: {min_kernel} with a posterior error of {min_posterior_error} and a mll error of {mll_for_min_post_error}")
         print(gp_mll_errors)
         for i in range(len(gp_mll_errors[0])):
