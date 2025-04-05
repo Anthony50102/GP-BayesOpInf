@@ -151,6 +151,8 @@ def main(
                     min_kernel = combo
                     min_posterior_error = post_error
                     mll_for_min_post_error = errors
+                    best_bayesian = bayesian_model
+                    best_gps = gps
                 if len(gp_mll_errors) == 5:
                     break
         print(f"Ensemble modeling has found best model to be: {min_kernel} with a posterior error of {min_posterior_error} and a mll error of {mll_for_min_post_error}")
@@ -164,6 +166,8 @@ def main(
             plt.scatter(errs, posterior_erros)
             plt.savefig(f"{custom_save}/mll_vs_post_error_index{i}.png")
             plt.clf()
+        bayesian_model = best_bayesian
+        gps = best_gps
         # Create the plot for the mll errors vs poster erros
         
 
