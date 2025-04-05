@@ -26,6 +26,7 @@ def main(
     exportto: str = None,
     openonsave: bool = True,
     ensemble: bool = False,
+    custom_save: str = "none"
 ):
     r"""Do a single trial from start to finish (do not save intermediate data).
 
@@ -190,12 +191,18 @@ def main(
     with opinf.utils.TimedBlock("\nplotting GP training fit\n"):
         # Gaussian process fit.
         plotter.plot_gp_training_fit(width=3)
-        utils.save_figure(f"train_{kernel.replace("*", "_")}.pdf", andopen=openonsave)
+        if custom_save != "none":
+            utils.save_figure_to_dir(f"train_{kernel.replace("*", "_")}.pdf", andopen=openonsave, dir=custom_save)
+        else:
+            utils.save_figure(f"train_{kernel.replace("*", "_")}.pdf", andopen=openonsave)
 
         # Bayesian model performance.
         for k, flag in enumerate((True, False)):
             plotter.plot_posterior(individual=flag)
-            utils.save_figure(f"predict{k}_{kernel.replace("*", "_")}.pdf", andopen=openonsave)
+            if custom_save != "none":
+                utils.save_figure_to_dir(f"predict{k}_{kernel.replace("*", "_")}.pdf", andopen=openonsave, dir=custom_save)
+            else:
+                utils.save_figure(f"predict{k}_{kernel.replace("*", "_")}.pdf", andopen=openonsave)
 
     # Prediction at different initial conditions.
     if config.test_initial_conditions is None:
@@ -213,7 +220,10 @@ def main(
         )
 
     fig = plotter.plot_posterior_newICs(draws, truth=test_trajectory)
-    utils.save_figure(f"newtrajectory_{kernel.replace("*", "_")}.pdf", andopen=openonsave, fig=fig)
+    if custom_save != "none":
+        utils.save_figure_to_dir(f"newtrajectory_{kernel.replace("*", "_")}.pdf", andopen=openonsave, fig=fig, dir=custom_save)
+    else:
+        utils.save_figure(f"newtrajectory_{kernel.replace("*", "_")}.pdf", andopen=openonsave, fig=fig)
 
 
 # =============================================================================
@@ -284,6 +294,13 @@ if __name__ == "__main__":
         "--ensemble",
         action='store_true'
     )
+    
+    parser.add_argument(
+        "--custom_save",
+        type=str,
+        default="none",
+        help="Custom location to save figures to"
+    )
 
     args = parser.parse_args()
     main(
@@ -296,5 +313,6 @@ if __name__ == "__main__":
         ndraws=args.ndraws,
         exportto=args.exportto,
         openonsave=not args.noopen,
-        ensemble=args.ensemble
+        ensemble=args.ensemble,
+        custom_save=args.custom_save
     )
