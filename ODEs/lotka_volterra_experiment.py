@@ -102,7 +102,7 @@ def main(
 
     if ensemble == True:
         kernels = ['cos', 'rbf', 'rq']
-        operators = ['+', '*']
+        operators = ['+']
         combinations = []
         # For each possible number of kernels (1 to len(kernels))
         for r in range(1, len(kernels) + 1):
@@ -153,6 +153,7 @@ def main(
                     mll_for_min_post_error = errors
                     best_bayesian = bayesian_model
                     best_gps = gps
+                    break
         print(f"Ensemble modeling has found best model to be: {min_kernel} with a posterior error of {min_posterior_error} and a mll error of {mll_for_min_post_error}")
         print(gp_mll_errors)
         for i in range(len(gp_mll_errors[0])):
