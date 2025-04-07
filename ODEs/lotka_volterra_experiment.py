@@ -102,7 +102,7 @@ def main(
 
     if ensemble == True:
         kernels = ['cos', 'rbf', 'rq']
-        operators = ['+']
+        operators = ['*']
         combinations = []
         # For each possible number of kernels (1 to len(kernels))
         for r in range(1, len(kernels) + 1):
