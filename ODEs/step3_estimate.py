@@ -30,6 +30,7 @@ def _posterior_autoregularized_multisample(
     num_samples: int,
     lstsq_solver: wlstsq.WeightedLSTSQSolver,
     model,
+    return_error: bool = False,
 ) -> bayes.BayesianODE:
     r"""Use an error-based optimization to select an appropriate regularization
     hyperparamter for the parameter estimation regression.
@@ -175,7 +176,10 @@ def _posterior_autoregularized_multisample(
         regularizer = best_reg
         print("Optimization failed, falling back on gridsearch")
 
-    return _smallest_error, get_bayesian_model(regularizer)
+    if return_error:
+        return _smallest_error, get_bayesian_model(regularizer)
+    else:
+        return get_bayesian_model(regularizer)
 
 
 def estimate_posterior(
@@ -183,6 +187,7 @@ def estimate_posterior(
     time_domain_prediction,
     config,
     initial_conditions=None,
+    return_error: bool = False
 ) -> bayes.BayesianODE:
     """Construct the posterior parameter distribution.
 
@@ -225,55 +230,6 @@ def estimate_posterior(
             initial_conditions=initial_conditions,
             num_samples=20,
             lstsq_solver=lstsq_solver,
-            model=model
-        )
-
-def estimate_posterior_with_error(
-    gps,
-    time_domain_prediction,
-    config,
-    initial_conditions=None,
-) -> bayes.BayesianODE:
-    """Construct the posterior parameter distribution.
-
-    Parameters
-    ----------
-    gps : list of trained gpkernel.GP_RBFW objects.
-        Gaussian processes for each state variable, already fit to data.
-    time_domain_prediction : (k,) ndarray
-        Time domain over which to solve the model for stability checks.
-    initial_conditions : (r,) ndarray or None
-        Initial conditions for the model. If not provided, use the GP state
-        estimates at the initial time.
-
-    Returns
-    -------
-    bayes.BayesianODE
-        Bayesian ODE model.
-    """
-    with opinf.utils.TimedBlock("constructing posterior hyperparameters\n"):
-        model = config.Model()
-        state_estimates = np.array([gp.state_estimate for gp in gps])
-
-        # Construct the data matrix, RHS ddts vector, and weight matrix.
-        D = model.data_matrix(state_estimates)
-        ddt_estimates = np.concatenate([gp.ddt_estimate for gp in gps])
-        W = la.block_diag(*[gp.sqrtW for gp in gps])
-
-
-        # Fit a weighted least-squares solver for the problem.
-        lstsq_solver = wlstsq.WeightedLSTSQSolver(W, regularizer=1)
-        lstsq_solver.fit(D, ddt_estimates)
-
-
-        # Select a single regularizer for all equations.
-        return _posterior_autoregularized_multisample(
-            regularizer_grid=__DEFAULT_SEARCH_GRID,
-            time_domain_prediction=time_domain_prediction,
-            time_domain_estimated=gps[0].t_estimation,
-            snapshots_estimated=state_estimates,
-            initial_conditions=initial_conditions,
-            num_samples=20,
-            lstsq_solver=lstsq_solver,
-            model=model
+            model=model,
+            return_error=return_error
         )

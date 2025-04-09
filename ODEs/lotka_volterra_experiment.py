@@ -1,4 +1,4 @@
-# main.py
+# lotka_volterra_experiment.py
 """Do a single numerical experiment from start to finish."""
 
 import os
@@ -12,6 +12,7 @@ import opinf
 import utils
 import config_lotka_volterra as config
 import step1_generate_data as step1
+import step1_5_estimate_priors as step1_5
 import step2_fitgps as step2
 import step3_estimate as step3
 import step4_plot as step4
@@ -24,6 +25,7 @@ def main(
     kernel:str,
     gp_regularizer: float = 1e-8,
     ndraws: int = 100,
+    prior: bool = False,
     exportto: str = None,
     openonsave: bool = True,
     ensemble: bool = False,
@@ -53,14 +55,16 @@ def main(
     openonsave : bool
         If ``True`` (default), open figures as they are created.
     """
-    custom_save = f"{custom_save}/{num_samples}_{noiselevel}"
-    try:
-        os.makedirs(custom_save)
-        print(f"Created directory at: {custom_save}")
-    except FileExistsError:
-    # directory already exists
-        print(f"Directory already exists at: {custom_save}")
-        pass
+    print(kernel)
+    if custom_save != "none":
+        custom_save = f"{custom_save}/{num_samples}_{noiselevel}"
+        try:
+            os.makedirs(custom_save)
+            print(f"Created directory at: {custom_save}")
+        except FileExistsError:
+        # directory already exists
+            print(f"Directory already exists at: {custom_save}")
+            pass
 
     # Report on experimental scenario.
     utils.summarize_experiment(
@@ -93,6 +97,16 @@ def main(
     ) = sampler.sample()
     true_parameters = np.copy(truthmodel.parameters)
 
+    # Step 1.5: Estimate period of data (Optional)
+    period_length_priors = None
+    if prior:
+        period_length_priors = step1_5.estimate_period(
+            t=time_domains_sampled,
+            y=snapshots_sampled,
+            plow=.5,
+            phigh=20
+        )
+
     # Step 2: Fit Gaussian processes to data ----------------------------------
     time_domain_training = np.linspace(
         training_span[0],
@@ -100,74 +114,18 @@ def main(
         num_regression_points,
     )
 
+    
+    # Step 2 & 3 fit gps and pick the best one based on posterior error
     if ensemble == True:
-        kernels = ['cos', 'rbf', 'rq']
-        operators = ['*']
-        combinations = []
-        # For each possible number of kernels (1 to len(kernels))
-        for r in range(1, len(kernels) + 1):
-            # Generate all orderings (permutations) of r kernels from the list.
-            for perm in itertools.permutations(kernels, r):
-                # If there's only one kernel, just add it.
-                if r == 1:
-                    combinations.append(perm[0])
-                else:
-                    # For each placement of operators between the kernels.
-                    for ops in itertools.product(operators, repeat=r-1):
-                        expr = perm[0]
-                        for op, ker in zip(ops, perm[1:]):
-                            expr += op + ker
-                        combinations.append(expr)
-
-        # Print the list of generated combinations
-        min_posterior_error = math.inf
-        gp_mll_errors = []
-        posterior_erros = []
-        for combo in combinations:
-                fitted_gps = step2.torch_fit_gaussian_processes(
-                    time_domain_training=time_domain_training,
-                    time_domains_sampled=time_domains_sampled,
-                    snapshots_sampled=snapshots_sampled,
-                    gp_regularizer=gp_regularizer,
-                    config=config,
-                    kernel = combo,
-                    return_error=True
-                )
-                print(fitted_gps)
-                errors = [result[1] for result in fitted_gps]
-                gps = [result[0] for result in fitted_gps]
-                gp_mll_errors.append(tuple(errors))
-
-            
-                # Step 3: Construct the posterior hyperparameters -------------------------
-                post_error , bayesian_model = step3.estimate_posterior(
-                    gps=gps,
-                    time_domain_prediction=time_domain_prediction,
-                    config=config
-                )
-                posterior_erros.append(post_error)
-
-                if post_error < min_posterior_error:
-                    min_kernel = combo
-                    min_posterior_error = post_error
-                    mll_for_min_post_error = errors
-                    best_bayesian = bayesian_model
-                    best_gps = gps
-        print(f"Ensemble modeling has found best model to be: {min_kernel} with a posterior error of {min_posterior_error} and a mll error of {mll_for_min_post_error}")
-        print(gp_mll_errors)
-        for i in range(len(gp_mll_errors[0])):
-            errs = []
-            for tup in gp_mll_errors:
-                print(tup[i])
-                errs.append(tup[i]) 
-            # gp_mll_errors = [tup[i] for tup in gp_mll_errors]
-            plt.scatter(errs, posterior_erros)
-            plt.savefig(f"{custom_save}/mll_vs_post_error_index{i}.png")
-            plt.clf()
-        bayesian_model = best_bayesian
-        gps = best_gps
-        # Create the plot for the mll errors vs poster erros
-        
+       bayesian_model, gps, kernel = step2.torch_fit_best_gps(
+           time_domain_training=time_domain_training,
+           time_domains_sampled=time_domains_sampled,
+           snapshots_sampled=snapshots_sampled,
+           time_domain_prediction=time_domain_prediction,
+           gp_regularizer=gp_regularizer,
+           config=config,
+           prior=period_length_priors
+       ) 
 
     else:
         gps = step2.torch_fit_gaussian_processes(
@@ -181,7 +139,7 @@ def main(
 
     
         # Step 3: Construct the posterior hyperparameters -------------------------
-        error , bayesian_model = step3.estimate_posterior(
+        bayesian_model = step3.estimate_posterior(
             gps=gps,
             time_domain_prediction=time_domain_prediction,
             config=config
@@ -318,6 +276,15 @@ if __name__ == "__main__":
         help="number of posterior model draws",
     )
     parser.add_argument(
+        "--ensemble",
+        action='store_true'
+    )
+    parser.add_argument(
+        "--prior",
+        action="store_true",
+        help="Computer priors to help gp fitting"
+    )
+    parser.add_argument(
         "--exportto",
         help="prefix for HDF5 files to save plot data to",
     )
@@ -325,10 +292,6 @@ if __name__ == "__main__":
         "--noopen",
         action="store_true",
         help="do not open figures automatically",
-    )
-    parser.add_argument(
-        "--ensemble",
-        action='store_true'
     )
     
     parser.add_argument(
@@ -347,6 +310,7 @@ if __name__ == "__main__":
         kernel=args.kernel,
         gp_regularizer=args.gpreg,
         ndraws=args.ndraws,
+        prior=args.prior,
         exportto=args.exportto,
         openonsave=not args.noopen,
         ensemble=args.ensemble,

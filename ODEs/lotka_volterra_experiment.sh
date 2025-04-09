@@ -8,7 +8,7 @@ experiment() {
 }
 
 # Noisy data.
-experiment 004 15 .1 300 --exportto data/lotka_volterra/ex1a  -k 'rbf*cos*rq'  # span samples noise regression points
+experiment 008 020 0.2 300 --exportto data/lotka_volterra/ex1a --ensemble --prior   # span samples noise regression points
 # experiment 004 10 .1 300 --exportto data/lotka_volterra/ex1a  -k 'rq' # span samples noise regression points
 # experiment 004 15 .1 300 --exportto data/lotka_volterra/ex1a  -k 'rbf*cos' # span samples noise regression points
 # experiment 004 10 .1 300 --exportto data/lotka_volterra/ex1a  -k 'cos' # span samples noise regression points
@@ -23,3 +23,4 @@ experiment 004 15 .1 300 --exportto data/lotka_volterra/ex1a  -k 'rbf*cos*rq'  #
 # experiment 090 010 .05 360 --exportto data/seird/ex2d
 
 # python3 plots_paper.py lotka_volterra
+
