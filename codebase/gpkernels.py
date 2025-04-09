@@ -108,13 +108,27 @@ class ManualCosineKernel(ManualKernelBase):
     Custom kernel implementing a Cosine kernel (often used for periodic behavior).
     
     k(x, x') = amplitude * cos(pi*(x - x')/period)
+    
+    Supports a prior on the period length to encourage solutions with specific periodicities.
     """
-    def __init__(self, **kwargs):
+    def __init__(self, period_prior=None, **kwargs):
+        """
+        Initialize the cosine kernel.
+        
+        Parameters:
+        -----------
+        period_prior : tuple or None
+            If provided, specifies a Gaussian prior on the period as (mean, std).
+            For example, period_prior=(24.0, 2.0) would create a prior centered at 24.0.
+        """
         super().__init__(has_lengthscale=False, **kwargs)
         self.register_parameter("raw_outputscale", torch.nn.Parameter(torch.tensor(1.0)))
         self.register_parameter("raw_period", torch.nn.Parameter(torch.tensor(1.0)))
         self.register_constraint("raw_outputscale", gpytorch.constraints.Positive())
         self.register_constraint("raw_period", gpytorch.constraints.Positive())
+        
+        # Store the prior information
+        self.period_prior = period_prior
     
     def forward(self, x1, x2, diag=False, **params):
         outputscale = self.raw_outputscale_constraint.transform(self.raw_outputscale)
@@ -130,6 +144,25 @@ class ManualCosineKernel(ManualKernelBase):
         diff = x.unsqueeze(1) - x_prime.unsqueeze(0)
         cos_part = torch.cos(math.pi * diff / period)
         return amplitude * cos_part
+    
+    def prior_log_prob(self):
+        """
+        Calculate the log probability of the current period under the prior.
+        
+        Returns:
+        --------
+        log_prob : torch.Tensor
+            The log probability of the current period under the prior, or 0 if no prior is set.
+        """
+        if self.period_prior is None:
+            return torch.tensor(0.0, device=self.raw_period.device)
+        
+        period = self.raw_period_constraint.transform(self.raw_period)
+        mean, std = self.period_prior
+        
+        # Calculate log probability under Gaussian prior
+        log_prob = -0.5 * ((period - mean) / std) ** 2 - math.log(std) - 0.5 * math.log(2 * math.pi)
+        return log_prob
 
 ###############################################################################
 # Composite Manual Kernel
@@ -309,6 +342,7 @@ def build_manual_kernel(kernel_str: str):
 class GenericExactGP(ExactGP):
     """
     A generic ExactGP model that accepts a custom kernel and mean module.
+    Supports kernels with parameter priors.
     """
     def __init__(self, train_x, train_y, likelihood, mean_module=None, kernel=None):
         super().__init__(train_x, train_y, likelihood)
@@ -319,6 +353,29 @@ class GenericExactGP(ExactGP):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+    
+    def get_kernels_prior_log_prob(self):
+        """
+        Calculate the total log probability of all kernel parameters under their priors.
+        
+        Returns:
+        --------
+        total_log_prob : torch.Tensor
+            Sum of log probabilities for all kernel parameters with priors.
+        """
+        total_log_prob = torch.tensor(0.0, device=next(self.parameters()).device)
+        
+        # Process individual kernels
+        if hasattr(self.covar_module, "prior_log_prob"):
+            total_log_prob += self.covar_module.prior_log_prob()
+        
+        # Check if this is a composite kernel and process its subkernels
+        if hasattr(self.covar_module, "kernels"):
+            for kernel in self.covar_module.kernels:
+                if hasattr(kernel, "prior_log_prob"):
+                    total_log_prob += kernel.prior_log_prob()
+        
+        return total_log_prob
 
 ###############################################################################
 # Base GP Wrapper and TORCH_GP
@@ -361,10 +418,18 @@ class TorchBaseGP(abc.ABC):
         self.likelihood.train()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=0.1)
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.likelihood, self.model)
+        
         for i in range(self.training_iter):
             optimizer.zero_grad()
             output = self.model(train_x)
-            loss = -mll(output, train_y)
+            
+            # Calculate negative log likelihood
+            nll = -mll(output, train_y)
+            
+            # Include prior terms (negative because we're minimizing)
+            prior_log_prob = self.model.get_kernels_prior_log_prob()
+            loss = nll - prior_log_prob  # Negative log prior for MAP estimation
+            
             loss.backward()
             optimizer.step()
 
@@ -429,19 +494,51 @@ class TORCH_GP(TorchBaseGP):
     You can specify the kernel either by passing a kernel instance or a string.
     For example: TORCH_GP(training_iter=100, kernel="rbf*rq*cos")
     """
-    def __init__(self, training_iter=100, kernel=None, mean_module=None):
+    def __init__(self, training_iter=100, kernel=None, mean_module=None, period_prior=None):
         super().__init__()
         self.training_iter = training_iter
+        self.period_prior = period_prior
+        
         # Allow passing a custom kernel as an instance or via a string.
         if isinstance(kernel, str):
-            self.kernel = build_manual_kernel(kernel)
+            self.kernel = self._build_kernel_with_prior(kernel)
         else:
             self.kernel = kernel if kernel is not None else ManualRBFKernel()
+        
         # Optionally allow a custom mean module; default to ConstantMean.
         self.mean_module = mean_module if mean_module is not None else ConstantMean()
 
+    def _build_kernel_with_prior(self, kernel_str):
+        """
+        Builds a kernel from a string expression and applies priors as needed.
+        """
+        # First, create the kernel using the existing parser
+        kernel = build_manual_kernel(kernel_str)
+        
+        # Apply period prior to any cosine kernels
+        if self.period_prior is not None:
+            print("Adding period length prior to GP")
+            self._apply_period_prior_to_kernel(kernel)
+            
+        return kernel
+    
+    def _apply_period_prior_to_kernel(self, kernel):
+        """
+        Recursively applies the period prior to any cosine kernels found in a composite kernel.
+        """
+        if isinstance(kernel, ManualCosineKernel):
+            kernel.period_prior = self.period_prior
+        
+        # Check if this is a composite kernel and apply to its subkernels
+        if hasattr(kernel, "kernels"):
+            for subkernel in kernel.kernels:
+                self._apply_period_prior_to_kernel(subkernel)
+
     def __str__(self):
-        return f"TORCH_GP with kernel: {self.kernel.__class__.__name__}"
+        base_str = f"TORCH_GP with kernel: {self.kernel.__class__.__name__}"
+        if self.period_prior is not None:
+            base_str += f", period prior: mean={self.period_prior[0]}, std={self.period_prior[1]}"
+        return base_str
 
     def compute_lstsq_matrices(self, t_est, eta):
         self.t_estimation = t_est
@@ -479,3 +576,65 @@ class TORCH_GP(TorchBaseGP):
         K_zz = mixed_derivs
         self._compute_estimates_and_weights(K_yy, K_zy, K_zz, rbf_zy, eta)
         return self
+
+    def _print_kernel_params(self, kernel=None, indent=0):
+        """Recursively print kernel structure and hyperparameters."""
+        if kernel is None:
+            if self.model is None:
+                print("Model not trained yet. No kernel parameters available.")
+                return
+            kernel = self.model.covar_module
+            print(f"Kernel Structure and Parameters:")
+        
+        # Print current kernel info
+        indent_str = "  " * indent
+        kernel_name = kernel.__class__.__name__
+        print(f"{indent_str}{kernel_name}")
+        
+        # Handle specific kernel types
+        if isinstance(kernel, ManualRBFKernel):
+            outputscale = kernel.raw_outputscale_constraint.transform(kernel.raw_outputscale).item()
+            lengthscale = kernel.raw_lengthscale_constraint.transform(kernel.raw_lengthscale).item()
+            print(f"{indent_str}  amplitude: {outputscale:.4f}")
+            print(f"{indent_str}  lengthscale: {lengthscale:.4f}")
+        
+        elif isinstance(kernel, ManualRQKernel):
+            outputscale = kernel.raw_outputscale_constraint.transform(kernel.raw_outputscale).item()
+            alpha = kernel.raw_alpha_constraint.transform(kernel.raw_alpha).item()
+            lengthscale = kernel.raw_lengthscale_constraint.transform(kernel.raw_lengthscale).item()
+            print(f"{indent_str}  amplitude: {outputscale:.4f}")
+            print(f"{indent_str}  alpha: {alpha:.4f}")
+            print(f"{indent_str}  lengthscale: {lengthscale:.4f}")
+        
+        elif isinstance(kernel, ManualCosineKernel):
+            outputscale = kernel.raw_outputscale_constraint.transform(kernel.raw_outputscale).item()
+            period = kernel.raw_period_constraint.transform(kernel.raw_period).item()
+            print(f"{indent_str}  amplitude: {outputscale:.4f}")
+            print(f"{indent_str}  period: {period:.4f}")
+            if hasattr(kernel, 'period_prior') and kernel.period_prior is not None:
+                mean, std = kernel.period_prior
+                print(f"{indent_str}  period_prior: mean={mean:.4f}, std={std:.4f}")
+        
+        # Recursively print subkernels for composite kernels
+        if hasattr(kernel, "kernels"):
+            print(f"{indent_str}  Subkernels:")
+            for subkernel in kernel.kernels:
+                self._print_kernel_params(subkernel, indent + 2)
+
+    def print_kernel_params(self):
+        """Print the kernel structure and all hyperparameter values."""
+        if self.model is None:
+            print("Model not trained yet. Run fit() first to train the model.")
+            return
+        
+        # Print likelihood noise parameter
+        noise = self.model.likelihood.noise.item()
+        print(f"Likelihood noise: {noise:.4f}")
+        
+        # Print mean module parameter
+        if isinstance(self.model.mean_module, ConstantMean):
+            mean_constant = self.model.mean_module.constant.item()
+            print(f"Mean constant: {mean_constant:.4f}")
+        
+        # Print kernel parameters
+        self._print_kernel_params()
