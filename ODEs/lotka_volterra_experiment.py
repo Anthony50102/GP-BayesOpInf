@@ -33,6 +33,7 @@ def main(
     custom_save: str = "none",
     verbose: bool = False,
     plots: bool = False,
+    no_seed: bool = False,
 ):
     r"""Do a single trial from start to finish (do not save intermediate data).
 
@@ -58,6 +59,13 @@ def main(
     openonsave : bool
         If ``True`` (default), open figures as they are created.
     """
+    if not no_seed: # If we don't pass in "no_seed" then we give a seed
+        seed = 21092023
+        print(f"Set seed: {seed}")
+        np.random.seed(seed)
+    else:
+        print(f"No seed being used")
+
     print(kernel)
     if custom_save != "none":
         save = f"{custom_save}/{num_samples}_{noiselevel}"
@@ -311,6 +319,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Similar to verbose output but save intermediate plots showing a variety of information"
     )
+    parser.add_argument(
+        "--no_seed",
+        action="store_true",
+        help="Truly random, no reprodicbility"
+    )
 
     args = parser.parse_args()
     main(
@@ -328,4 +341,5 @@ if __name__ == "__main__":
         custom_save=args.custom_save,
         verbose=args.verbose,
         plots=args.plots,
+        no_seed=args.no_seed,
     )

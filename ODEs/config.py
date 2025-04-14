@@ -74,4 +74,4 @@ print(f"Logging to {LOG_FILE}")
 
 
 # Random seed -----------------------------------------------------------------
-np.random.seed(21092023)
+# np.random.seed(21092023)

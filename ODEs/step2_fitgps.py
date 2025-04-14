@@ -84,6 +84,7 @@ def torch_fit_gaussian_processes(
     snapshots_sampled : (num_variables, m) ndarray
         Observed training snapshots.
     """
+    # TODO - Add periodic kernel to incoroporate the priors
     if prior is not None and 'cos' in kernel:
         print(f"Use prior for kernel: {kernel}")
     else:
@@ -121,8 +122,9 @@ def torch_fit_best_gps(
     config,
     gp_regularizer: float = 1e-8,
     prior = None,
+    errors: bool = False,
     ):
-    combinations = ['cos*rbf', 'cos*rq', 'rbf', 'rq', 'cos']
+    combinations = ['cos*rbf', 'cos*rq', 'periodic*rbf', 'periodic*rq', 'rbf', 'rq', 'cos']
 
     min_posterior_error = math.inf
     gp_mll_errors = []
@@ -159,5 +161,8 @@ def torch_fit_best_gps(
             best_bayesian = bayesian_model
             best_gps = gps
     print(f"Best kernel has been found to be: {min_kernel} with a posterior error of {min_posterior_error} and a mll error of {mll_for_min_post_error}")
-    return best_bayesian, best_gps, min_kernel
+    if not errors:
+        return best_bayesian, best_gps, min_kernel
+    else:
+        return best_bayesian, best_gps, min_kernel, min_posterior_error, errors
     
