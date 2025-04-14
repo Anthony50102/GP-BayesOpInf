@@ -399,7 +399,7 @@ class TorchBaseGP(abc.ABC):
     def nsamples(self):
         return self.t_training.size(0) if self.t_training is not None else 0
 
-    def fit(self, t_training, training_data, error: bool = False):
+    def instantiate(self, t_training, training_data):
         if training_data.ndim > 1:
             raise ValueError("GP training data must be one-dimensional")
         # Store training data as tensors.
@@ -414,6 +414,11 @@ class TorchBaseGP(abc.ABC):
             train_x, train_y, self.likelihood,
             mean_module=self.mean_module if hasattr(self, 'mean_module') else None,
             kernel=self.kernel if hasattr(self, 'kernel') else None)
+
+    def fit(self, t_training, training_data, error: bool = False):
+        self.instantiate(t_training=t_training, training_data=training_data)
+        train_x = self.t_training.unsqueeze(-1)
+        train_y = self.y
         self.model.train()
         self.likelihood.train()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=0.1)
