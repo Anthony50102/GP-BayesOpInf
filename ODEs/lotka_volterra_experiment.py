@@ -16,6 +16,7 @@ import step1_5_estimate_priors as step1_5
 import step2_fitgps as step2
 import step3_estimate as step3
 import step4_plot as step4
+import plots as extra_plots
 
 def main(
     training_span: tuple[float, float],
@@ -29,7 +30,9 @@ def main(
     exportto: str = None,
     openonsave: bool = True,
     ensemble: bool = False,
-    custom_save: str = "none"
+    custom_save: str = "none",
+    verbose: bool = False,
+    plots: bool = False,
 ):
     r"""Do a single trial from start to finish (do not save intermediate data).
 
@@ -57,14 +60,17 @@ def main(
     """
     print(kernel)
     if custom_save != "none":
-        custom_save = f"{custom_save}/{num_samples}_{noiselevel}"
+        save = f"{custom_save}/{num_samples}_{noiselevel}"
         try:
             os.makedirs(custom_save)
-            print(f"Created directory at: {custom_save}")
+            print(f"Created directory at: {save}")
         except FileExistsError:
         # directory already exists
-            print(f"Directory already exists at: {custom_save}")
+            print(f"Directory already exists at: {save}")
             pass
+    else:
+        save = config.figures_path()
+    
 
     # Report on experimental scenario.
     utils.summarize_experiment(
@@ -106,6 +112,9 @@ def main(
             plow=.5,
             phigh=20
         )
+        if plots:
+            extra_plots.period_length_prior(period_length_priors,time_domains_sampled,snapshots_sampled,save)
+
 
     # Step 2: Fit Gaussian processes to data ----------------------------------
     time_domain_training = np.linspace(
@@ -185,18 +194,12 @@ def main(
     with opinf.utils.TimedBlock("\nplotting GP training fit\n"):
         # Gaussian process fit.
         plotter.plot_gp_training_fit(width=3)
-        if custom_save != "none":
-            utils.save_figure_to_dir(f"train_{kernel.replace('*', '_')}.pdf", andopen=openonsave, dir=custom_save)
-        else:
-            utils.save_figure(f"train_{kernel.replace('*', '_')}.pdf", andopen=openonsave)
+        utils.save_figure_to_dir(f"train_{kernel.replace('*', '_')}.pdf", andopen=openonsave, dir=save)
 
         # Bayesian model performance.
         for k, flag in enumerate((True, False)):
             plotter.plot_posterior(individual=flag)
-            if custom_save != "none":
-                utils.save_figure_to_dir(f"predict{k}_{kernel.replace('*', '_')}.pdf", andopen=openonsave, dir=custom_save)
-            else:
-                utils.save_figure(f"predict{k}_{kernel.replace('*', '_')}.pdf", andopen=openonsave)
+            utils.save_figure_to_dir(f"predict{k}_{kernel.replace('*', '_')}.pdf", andopen=openonsave, dir=save)
 
     # Prediction at different initial conditions.
     if config.test_initial_conditions is None:
@@ -214,10 +217,7 @@ def main(
         )
 
     fig = plotter.plot_posterior_newICs(draws, truth=test_trajectory)
-    if custom_save != "none":
-        utils.save_figure_to_dir(f"newtrajectory_{kernel.replace('*', '_')}.pdf", andopen=openonsave, fig=fig, dir=custom_save)
-    else:
-        utils.save_figure(f"newtrajectory_{kernel.replace('*', '_')}.pdf", andopen=openonsave, fig=fig)
+    utils.save_figure_to_dir(f"newtrajectory_{kernel.replace('*', '_')}.pdf", andopen=openonsave, fig=fig, dir=save)
 
 
 # =============================================================================
@@ -300,6 +300,17 @@ if __name__ == "__main__":
         default="none",
         help="Custom location to save figures to"
     )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Print out information during computation"
+    )
+    parser.add_argument(
+        "--plots",
+        action="store_true",
+        help="Similar to verbose output but save intermediate plots showing a variety of information"
+    )
 
     args = parser.parse_args()
     main(
@@ -314,5 +325,7 @@ if __name__ == "__main__":
         exportto=args.exportto,
         openonsave=not args.noopen,
         ensemble=args.ensemble,
-        custom_save=args.custom_save
+        custom_save=args.custom_save,
+        verbose=args.verbose,
+        plots=args.plots,
     )

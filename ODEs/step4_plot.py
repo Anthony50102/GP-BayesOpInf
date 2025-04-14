@@ -238,3 +238,71 @@ class ODEPlotter(baseplots._BasePlotter):
             ):
                 data[attr] = hf[attr][:]
         return cls(**data, labels=config.Model.LABELS, config=config)
+    
+    def plot_gp_prior_samples(self, num_samples=5, width=3):
+        """Plot the truth, the sparse / noisy data, and samples from the GP prior.
+
+        Parameters
+        ----------
+        num_samples : int
+            Number of samples to draw from the GP prior.
+        width : float
+            Plot mean ± (``width`` * standard_deviation) for the confidence interval.
+        """
+        end = self.end_train_index
+        fig, axes = self.new_figure()
+
+        # Generate samples from the GP prior (assuming Gaussian distribution around the mean)
+        gp_samples = []
+        for i in range(self.num_states):
+            # Generate random samples using the mean and standard deviation
+            samples = np.random.normal(
+                loc=self.gp_means[i][:, np.newaxis],  # Shape: (num_points, 1)
+                scale=self.gp_stds[i][:, np.newaxis],  # Shape: (num_points, 1)
+                size=(len(self.training_time_domain), num_samples)  # Shape: (num_points, num_samples)
+            )
+            gp_samples.append(samples)
+
+        for i, ax in enumerate(axes.flat):
+            self._plot_truth(
+                ax,
+                self.prediction_time_domain[:end],
+                self.true_states[i, :end],
+            )
+            self._plot_data(
+                ax,
+                self.sampling_time_domain[i],
+                self.snapshots[i],
+            )
+            
+            # Plot the GP mean and confidence interval
+            self._plot_gp(
+                ax,
+                self.training_time_domain,
+                self.gp_means[i],
+                self.gp_stds[i],
+                width=width,
+                alpha=0.2,  # Make the confidence interval more transparent
+            )
+            
+            # Plot individual samples
+            for j in range(num_samples):
+                ax.plot(
+                    self.training_time_domain, 
+                    gp_samples[i][:, j], 
+                    'k-', 
+                    alpha=0.5, 
+                    linewidth=1, 
+                    label='GP Sample' if i == 0 and j == 0 else None
+                )
+                
+            ax.set_ylabel(self.labels[i], fontsize="large")
+
+        fig.suptitle("GP Prior Samples", fontsize="xx-large")
+        self._format_figure(fig, axes)
+        
+        # Add legend to the first subplot
+        if axes.size > 0:
+            axes[0].legend(loc='best')
+            
+        return fig

@@ -170,7 +170,7 @@ def estimate_period(t, y, err=None, plow=1, phigh=100, ofac=10):
     # Iterate over each signal in y
     for i in range(len(y)):
         # Create error array for this specific signal
-        current_err = np.full_like(t[i], 0.1) if err is None else err[i]
+        current_err = np.full_like(t[i], 1) if err is None else err[i]
         
         # Pass the specific signal and its matching error array
         periods, p = bgls(t[i], y[i], current_err, plow=plow, phigh=phigh, ofac=ofac)

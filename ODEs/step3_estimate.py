@@ -233,3 +233,182 @@ def estimate_posterior(
             model=model,
             return_error=return_error
         )
+    
+# In wlstsq.py, modify the WeightedLSTSQSolver class to accept periodicity priors
+
+class WeightedLSTSQSolver:
+    """Solver for a weighted least-squares problem (or problems) with optional periodicity priors."""
+
+    _METHODS = (
+        "svd",
+        "lstsq",
+        "normal",
+    )
+
+    def __init__(
+        self,
+        weights: np.ndarray,
+        regularizer: float = 0.0,
+        method: str = "lstsq",
+        period_priors: dict = None  # Add period priors parameter
+    ):
+        """Store the regularizer and initialize attributes.
+
+        Parameters
+        ----------
+        weights : (r, m, m) or (m, m) ndarray
+            Collection of r positive definite matrices defining the weighted
+            norms for each problem.
+        regularizer : (d, d) or (d,) ndarray or float.
+            Regularization hyperparameters.
+        method : str
+            The strategy for solving the regularized least-squares problem.
+        period_priors : dict or None
+            Dictionary containing prior information about periodicity of the system.
+            Should include 'means' and 'variances' for the periods of each state.
+        """
+        self.__solvers = []
+        self.__period_priors = period_priors  # Store the period priors
+
+        self.weights = weights
+        self.regularizer = regularizer
+        self.method = method
+
+    # ... keep existing properties and methods ...
+
+    def fit(self, lhs, rhs):
+        """Store the data matrices defining the least-squares problems
+        and incorporate periodicity priors if available.
+
+        Parameters
+        ----------
+        lhs : (m, d) ndarray
+            Unweighted left-hand side data matrix (D in the notes).
+        rhs : (r, m) or (m,) ndarray
+            Unweighted right-hand side data matrix.
+        """
+        # Check dimensions
+        if lhs.shape != (_shape := (self.m, lhs.shape[1])):
+            raise ValueError(f"expected lhs.shape == {_shape}")
+        if np.ndim(rhs) == 1:
+            rhs = np.reshape(rhs, (1, -1))
+        if rhs.shape != (_shape := (self.r, self.m)):
+            raise ValueError(f"expected rhs.shape == {_shape}")
+        self.__d = lhs.shape[1]
+
+        # Apply periodicity priors if available
+        modified_lhs = lhs
+        modified_rhs = rhs
+        modified_weights = self.weights
+
+        if self.__period_priors is not None:
+            # Modify the LHS, RHS, or weights based on periodicity priors
+            modified_lhs, modified_rhs, modified_weights = self._incorporate_periodicity_priors(
+                lhs, rhs, self.weights)
+
+        # Initialize underlying solvers
+        if np.isscalar(self.regularizer):
+            SolverClass = opinf.lstsq.L2Solver
+        else:
+            SolverClass = opinf.lstsq.TikhonovSolver
+
+        self.__solvers = [
+            SolverClass(self.regularizer).fit(
+                modified_weights[i] @ modified_lhs, modified_weights[i] @ modified_rhs[i]
+            )
+            for i in range(self.r)
+        ]
+
+        # Set the solver method (only for Tikhonov solvers).
+        if SolverClass is opinf.lstsq.TikhonovSolver:
+            for solver in self.__solvers:
+                solver.method = self.method
+
+        return self
+
+    def _incorporate_periodicity_priors(self, lhs, rhs, weights):
+        """Incorporate periodicity priors into the least squares problem.
+        
+        This can be done by:
+        1. Adding synthetic data points that reflect the periodicity
+        2. Modifying the weights to favor parameter values that result in the expected period
+        3. Adding regularization terms that prefer parameter values consistent with prior
+        
+        Parameters
+        ----------
+        lhs : (m, d) ndarray
+            Left-hand side data matrix.
+        rhs : (r, m) ndarray
+            Right-hand side data matrix.
+        weights : (r, m, m) ndarray
+            Weight matrices.
+            
+        Returns
+        -------
+        modified_lhs : ndarray
+            Modified left-hand side matrix.
+        modified_rhs : ndarray
+            Modified right-hand side matrix.
+        modified_weights : ndarray
+            Modified weight matrices.
+        """
+        # Extract period priors
+        period_means = self.__period_priors.get('means', None)
+        period_vars = self.__period_priors.get('variances', None)
+        
+        if period_means is None or period_vars is None:
+            return lhs, rhs, weights
+            
+        # Create modified matrices - this is where we incorporate the priors
+        # Approach 1: Add synthetic data points enforcing periodicity
+        # For each state variable with a prior, add constraints that 
+        # x(t+T) ≈ x(t) where T is the prior period
+        
+        # Get original dimensions
+        m, d = lhs.shape
+        r = rhs.shape[0]
+        
+        # Number of synthetic constraints to add per state variable
+        n_constraints = 10  # Adjust as needed
+        
+        # Create arrays to store new rows
+        new_lhs_rows = []
+        new_rhs_values = []
+        
+        # For each state with a period prior, add synthetic constraints
+        for i, (mean_period, var_period) in enumerate(zip(period_means, period_vars)):
+            if i >= r:  # Skip if we don't have this state
+                continue
+                
+            # Weight for this constraint (higher confidence = higher weight)
+            confidence = 1.0 / (var_period + 1e-6)  
+            
+            # Create synthetic data points enforcing periodicity constraints
+            # This is a simplified approach - in practice you'd design this
+            # based on the specific system dynamics
+            constraint_lhs = np.zeros((n_constraints, d))
+            constraint_rhs = np.zeros(n_constraints)
+            
+            # The constraint design depends on the structure of the system
+            # For oscillatory systems, we might constrain parameters to match the period
+            # This is highly system-dependent and would need to be customized
+            
+            # Add the new constraints
+            new_lhs_rows.append(constraint_lhs)
+            new_rhs_values.append(constraint_rhs)
+        
+        # If we have any new constraints to add
+        if new_lhs_rows:
+            # Combine the original and new constraints
+            modified_lhs = np.vstack([lhs] + new_lhs_rows)
+            
+            # Adjust rhs and weights accordingly
+            # (Implementation details depend on specific system structure)
+            # This is a placeholder for the actual implementation
+            modified_rhs = rhs  # Would need to be extended
+            modified_weights = weights  # Would need to be extended
+            
+            return modified_lhs, modified_rhs, modified_weights
+            
+        # If no constraints were added, return originals
+        return lhs, rhs, weights
