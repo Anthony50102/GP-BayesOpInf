@@ -163,6 +163,94 @@ class ManualCosineKernel(ManualKernelBase):
         # Calculate log probability under Gaussian prior
         log_prob = -0.5 * ((period - mean) / std) ** 2 - math.log(std) - 0.5 * math.log(2 * math.pi)
         return log_prob
+    
+
+class ManualPeriodicKernel(ManualKernelBase):
+    r"""
+    Custom kernel implementing the standard "periodic" kernel:
+    
+    .. math::
+        k(x, x') = \text{amplitude} \times \exp\Big(
+            -\, \frac{2}{\text{lengthscale}^2} \, \sin^2\big(\pi \frac{x - x'}{\text{period}}\big)
+        \Big).
+
+    This version follows closely the GPyTorch PeriodicKernel's functional form.
+    It supports three parameters:
+      - amplitude (outputscale)
+      - period
+      - lengthscale
+
+    For multi-dimensional inputs, this kernel sums up the \(\sin^2(\dots)\) contributions for each dimension (just like the RBF kernel sums \((x - x')^2\) across dimensions).
+
+    If you want a prior for the period (or lengthscale), see how we do it in `ManualCosineKernel` (the `.prior_log_prob()` method).
+    """
+    def __init__(self, **kwargs):
+        super().__init__(has_lengthscale=False, **kwargs)
+        
+        # Register learnable parameters:
+        self.register_parameter("raw_outputscale", torch.nn.Parameter(torch.tensor(1.0)))
+        self.register_parameter("raw_period", torch.nn.Parameter(torch.tensor(1.0)))
+        self.register_parameter("raw_lengthscale", torch.nn.Parameter(torch.tensor(1.0)))
+        
+        # Each parameter is constrained to be positive:
+        self.register_constraint("raw_outputscale", gpytorch.constraints.Positive())
+        self.register_constraint("raw_period", gpytorch.constraints.Positive())
+        self.register_constraint("raw_lengthscale", gpytorch.constraints.Positive())
+
+    def forward(self, x1, x2, diag=False, **params):
+        # Transform raw parameters into positive domain:
+        outputscale = self.raw_outputscale_constraint.transform(self.raw_outputscale)
+        period = self.raw_period_constraint.transform(self.raw_period)
+        lengthscale = self.raw_lengthscale_constraint.transform(self.raw_lengthscale)
+
+        # Compute covariance matrix with the “periodic” kernel:
+        K = self.manual_periodic_kernel(
+            x1, x2, 
+            amplitude=outputscale, 
+            period=period, 
+            lengthscale=lengthscale
+        )
+        return torch.diag(K) if diag else K
+
+    @staticmethod
+    def manual_periodic_kernel(x, x_prime, amplitude, period, lengthscale):
+        """
+        Implementation of the standard periodic kernel:
+        
+          k(x, x') = amplitude * exp( -2 * sum_d( sin^2( pi (x_d - x'_d) / period ) ) / lengthscale^2 )
+        
+        If x is 1D or 2D, sums the sin^2() terms across any features/dimensions.
+        """
+        x = ManualKernelBase._prepare_input(x)
+        x_prime = ManualKernelBase._prepare_input(x_prime)
+        
+        # For x, x_prime of shape [N] or [N, D], do broadcasting:
+        diff = x.unsqueeze(1) - x_prime.unsqueeze(0)
+        # shape: [N, M] or [N, M, D]
+        
+        # sin^2(pi * diff / period)
+        sin_term = torch.sin(math.pi * diff / period)
+        sin_sq = sin_term.pow(2)
+        
+        # If multi-dimensional, sum over the last dimension:
+        #   sum_d( sin^2(...) ), result shape [N, M]
+        if sin_sq.dim() > 2:
+            sin_sq_sum = sin_sq.sum(dim=-1)
+        else:
+            sin_sq_sum = sin_sq
+
+        # Exponent part:  -2 * sin^2(...) / lengthscale^2
+        exponent = -2.0 * sin_sq_sum / (lengthscale**2)
+        return amplitude * torch.exp(exponent)
+    
+    def prior_log_prob(self):
+        """
+        If you want to incorporate any custom Gaussian priors for period or lengthscale
+        (like done in ManualCosineKernel), you could define them here.
+        Otherwise, return 0.
+        """
+        return torch.tensor(0.0, device=self.raw_period.device)
+
 
 ###############################################################################
 # Composite Manual Kernel
@@ -287,14 +375,13 @@ class KernelParser:
 def build_kernel_from_tree(tree):
     """
     Recursively convert the parse tree into a kernel instance.
-    The tree nodes are either:
-      - A string: representing a base kernel (e.g., "rbf")
-      - A tuple: (operator, left, right)
+    ...
     """
     token_to_class = {
         "rbf": ManualRBFKernel,
         "rq": ManualRQKernel,
         "cos": ManualCosineKernel,
+        "periodic": ManualPeriodicKernel,
     }
     
     if isinstance(tree, str):
@@ -314,6 +401,7 @@ def build_kernel_from_tree(tree):
             raise ValueError(f"Unknown operator: {op}")
     else:
         raise ValueError("Invalid parse tree structure")
+
 
 def build_manual_kernel(kernel_str: str):
     """
