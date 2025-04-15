@@ -78,6 +78,13 @@ class _BasePlotter(abc.ABC):
                 line.set_markersize(14)
                 line.set_alpha(1)
 
+        for ax in axes[-1, :]:
+            ax.set_xlabel("$t$")
+            ax.set_xticks(np.arange(
+                int(np.floor(ax.get_xlim()[0])),
+                int(np.ceil(ax.get_xlim()[1])) + 1,
+                1
+            ))
         return fig, (axes[:, 0] if axes.shape[1] == 1 else axes)
 
     @staticmethod
