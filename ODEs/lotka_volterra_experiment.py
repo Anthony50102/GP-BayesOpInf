@@ -16,7 +16,6 @@ import step1_5_estimate_priors as step1_5
 import step2_fitgps as step2
 import step3_estimate as step3
 import step4_plot as step4
-import plots as extra_plots
 
 def main(
     training_span: tuple[float, float],
@@ -120,9 +119,6 @@ def main(
             plow=.5,
             phigh=20
         )
-        if plots:
-            extra_plots.period_length_prior(period_length_priors,time_domains_sampled,snapshots_sampled,save)
-
 
     # Step 2: Fit Gaussian processes to data ----------------------------------
     time_domain_training = np.linspace(

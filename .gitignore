@@ -13,7 +13,8 @@
 !PDEs
 !PDEsMulti
 !ODEs
-
+!ODEs/notebooks
+ 
 # ...and these files in the subdirectories.
 !*/*.py
 !*/*.ipynb
