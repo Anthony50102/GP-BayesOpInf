@@ -160,8 +160,12 @@ def main(
 
     utils.summarize_posterior(true_parameters, bayesian_model)
 
+    gp_predictions = [gp.predict(time_domain_training) for gp in gps]
+    gp_means = np.array([ms.mean for ms in gp_predictions])
+    gp_stds=np.array([ms.stddev for ms in gp_predictions])
+
     # Draw samples from the posterior.
-    ICs = true_states[:, 0]
+    ICs = (gp_means[0][0], gp_means[1][0])
     with opinf.utils.TimedBlock("\nsampling posterior distribution"):
         draws = bayesian_model.solution_posterior(
             initial_conditions=ICs,
@@ -170,9 +174,6 @@ def main(
         )
 
     # Step 4: plot results ----------------------------------------------------
-    gp_predictions = [gp.predict(time_domain_training) for gp in gps]
-    gp_means = np.array([ms.mean for ms in gp_predictions])
-    gp_stds=np.array([ms.stddev for ms in gp_predictions])
 
     plotter = step4.ODEPlotter(
         sampling_time_domain=time_domains_sampled,

@@ -18,7 +18,8 @@ import wlstsq
 
 
 __MAXOPTVAL = 1e12  # Ceiling for optimization.
-__DEFAULT_SEARCH_GRID = np.logspace(-16, 5, 22)  # Search grid.
+# __DEFAULT_SEARCH_GRID = np.logspace(-16, 5, 22)  # Search grid.
+__DEFAULT_SEARCH_GRID = np.logspace(-32, 10, 22)  # Search grid.
 
 
 def _posterior_autoregularized_multisample(
@@ -73,6 +74,7 @@ def _posterior_autoregularized_multisample(
     def unstable(_solution, size):
         """Return True if the solution is unstable."""
         if _solution.shape[-1] != size:
+            print(_solution.shape[-1], size)
             return True
         return np.any(np.abs(_solution - shift).max(axis=1) > limits)
 
@@ -219,6 +221,8 @@ def estimate_posterior(
         # Fit a weighted least-squares solver for the problem.
         lstsq_solver = wlstsq.WeightedLSTSQSolver(W, regularizer=1)
         lstsq_solver.fit(D, ddt_estimates)
+
+        print(state_estimates.shape, D.shape, W.shape, ddt_estimates.shape)
 
 
         # Select a single regularizer for all equations.

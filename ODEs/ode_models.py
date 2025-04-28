@@ -112,7 +112,7 @@ class _BaseODE(abc.ABC):
         -------
         Q : (num_variables, k) ndarray
             Solution to the ODE over the discretized space-time domain.
-        """
+        """ 
         if len(initial_conditions) != (nvars := self.num_variables):
             raise ValueError(
                 f"expected initial conditions for exactly {nvars} variables, got {len(initial_conditions)} variable"

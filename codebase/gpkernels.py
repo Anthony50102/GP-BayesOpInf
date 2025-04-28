@@ -634,6 +634,7 @@ class TORCH_GP(TorchBaseGP):
         return base_str
 
     def compute_lstsq_matrices(self, t_est, eta):
+        print(t_est.shape)
         self.t_estimation = t_est
         t_est_tensor = torch.tensor(t_est, dtype=torch.float32) if not torch.is_tensor(t_est) else t_est
         t_est_tensor.requires_grad_()
