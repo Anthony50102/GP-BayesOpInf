@@ -9,12 +9,13 @@ import numpy as np
 
 import opinf
 
-import config
+# import config
 
 
 def trajectory(
     training_span: tuple[float, float],
     num_samples: int,
+    config,
     noiselevel: float = 0.0,
 ):
     """Get sparse, noisy data for a single trajectory.

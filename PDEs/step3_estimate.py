@@ -11,7 +11,7 @@ import numpy as np
 import scipy.linalg as la
 import scipy.optimize as opt
 
-import config
+# import config
 import bayes
 import wlstsq
 
@@ -184,6 +184,7 @@ def estimate_posterior(
     time_domain: np.ndarray,
     gps: list,
     inputs: np.ndarray,
+    config
 ) -> bayes.BayesianROM:
     """Construct the posterior parameter distribution.
 
