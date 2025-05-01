@@ -1,0 +1,342 @@
+# lotka_volterra_experiment.py
+"""Do a single numerical experiment from start to finish."""
+
+import os
+import itertools
+import math
+import numpy as np
+import matplotlib.pyplot as plt
+
+import opinf
+
+import utils
+import config_lotka_volterra as config
+import step1_generate_data as step1
+import step1_5_estimate_priors as step1_5
+import step2_fitgps as step2
+import step3_estimate as step3
+import step4_plot as step4
+
+def main(
+    training_span: tuple[float, float],
+    num_samples: int,
+    noiselevel: float,
+    num_regression_points: int,
+    kernel:str,
+    gp_regularizer: float = 1e-8,
+    ndraws: int = 100,
+    prior: bool = False,
+    exportto: str = None,
+    openonsave: bool = True,
+    ensemble: bool = False,
+    custom_save: str = "none",
+    verbose: bool = False,
+    plots: bool = False,
+    no_seed: bool = False,
+):
+    r"""Do a single trial from start to finish (do not save intermediate data).
+
+    Parameters
+    ----------
+    training_span : (float, float)
+        Time domain over which to sample solution data.
+    num_samples : int > 0
+        Number of snapshots to sample.
+    noiselevel : float >= 0
+        Percentage of noise applied to the training snapshots.
+    num_regression_points : int > 0
+        Number of points at which to evaluate the GP state and derivative
+        estimates.
+    gp_regularizer : float >= 0
+        Regularization hyperparameter for the GP inference in inverting for
+        the least-squares weight matrix.
+    ndraws : int
+        Number of draws from the posterior distribution.
+    exportto : str
+        If given, write experiment data to an HDF5 files with ``exportto`` as
+        the prefix.
+    openonsave : bool
+        If ``True`` (default), open figures as they are created.
+    """
+    if not no_seed: # If we don't pass in "no_seed" then we give a seed
+        seed = 21092023
+        print(f"Set seed: {seed}")
+        np.random.seed(seed)
+    else:
+        print(f"No seed being used")
+
+    print(kernel)
+    if custom_save != "none":
+        save = f"{custom_save}/{num_samples}_{noiselevel}"
+        try:
+            os.makedirs(custom_save)
+            print(f"Created directory at: {save}")
+        except FileExistsError:
+        # directory already exists
+            print(f"Directory already exists at: {save}")
+            pass
+    else:
+        save = config.figures_path()
+    
+
+    # Report on experimental scenario.
+    utils.summarize_experiment(
+        training_span=training_span,
+        num_samples=num_samples,
+        noiselevel=noiselevel,
+        num_regression_points=num_regression_points,
+        gp_regularizer=gp_regularizer,
+        opinf_regularizer=None,
+        ndraws=ndraws,
+    )
+
+    # Step 1: Generate data ---------------------------------------------------
+    sampler = step1.TrajectorySampler(
+        training_span=training_span,
+        num_samples=num_samples,
+        noiselevel=noiselevel,
+        num_regression_points=num_regression_points,
+        synced=False,
+        integersonly=False,
+        config=config
+    )
+
+    (
+        truthmodel,
+        time_domain_prediction,
+        true_states,
+        time_domains_sampled,
+        snapshots_sampled,
+    ) = sampler.sample()
+    true_parameters = np.copy(truthmodel.parameters)
+
+    # Step 1.5: Estimate period of data (Optional)
+    period_length_priors = None
+    if prior:
+        period_length_priors = step1_5.estimate_period(
+            t=time_domains_sampled,
+            y=snapshots_sampled,
+            plow=.5,
+            phigh=20
+        )
+
+    # Step 2: Fit Gaussian processes to data ----------------------------------
+    time_domain_training = np.linspace(
+        training_span[0],
+        training_span[-1],
+        num_regression_points,
+    )
+
+    
+    # Step 2 & 3 fit gps and pick the best one based on posterior error
+    if ensemble == True:
+       bayesian_model, gps, kernel = step2.torch_fit_best_gps(
+           time_domain_training=time_domain_training,
+           time_domains_sampled=time_domains_sampled,
+           snapshots_sampled=snapshots_sampled,
+           time_domain_prediction=time_domain_prediction,
+           gp_regularizer=gp_regularizer,
+           config=config,
+           prior=period_length_priors
+       ) 
+
+    else:
+        gps = step2.torch_fit_gaussian_processes(
+            time_domain_training=time_domain_training,
+            time_domains_sampled=time_domains_sampled,
+            snapshots_sampled=snapshots_sampled,
+            gp_regularizer=gp_regularizer,
+            config=config,
+            kernel = kernel
+        )
+
+    
+        # Step 3: Construct the posterior hyperparameters -------------------------
+        bayesian_model = step3.estimate_posterior(
+            gps=gps,
+            time_domain_prediction=time_domain_prediction,
+            config=config
+        )
+
+    utils.summarize_posterior(true_parameters, bayesian_model)
+
+    gp_predictions = [gp.predict(time_domain_training) for gp in gps]
+    gp_means = np.array([ms.mean for ms in gp_predictions])
+    gp_stds=np.array([ms.stddev for ms in gp_predictions])
+
+    # Draw samples from the posterior.
+    ICs = (gp_means[0][0], gp_means[1][0])
+    with opinf.utils.TimedBlock("\nsampling posterior distribution"):
+        draws = bayesian_model.solution_posterior(
+            initial_conditions=ICs,
+            timepoints=time_domain_prediction,
+            ndraws=ndraws,
+        )
+
+    # Step 4: plot results ----------------------------------------------------
+
+    plotter = step4.ODEPlotter(
+        sampling_time_domain=time_domains_sampled,
+        training_time_domain=time_domain_training,
+        prediction_time_domain=time_domain_prediction,
+        snapshots=snapshots_sampled,
+        true_states=true_states,
+        gp_means = gp_means,
+        gp_stds = gp_stds,
+        draws=draws,
+        labels=truthmodel.LABELS,
+        config=config
+    )
+
+    # If desired, export experimental data to HDF5 files for later.
+    if exportto is not None:
+        os.makedirs(os.path.dirname(exportto), exist_ok=True)
+        dfile = f"{exportto}_data.h5"
+        with opinf.utils.TimedBlock(f"exporting data to {dfile}"):
+            plotter.save(dfile, overwrite=True)
+
+    # Plot and save results.
+    with opinf.utils.TimedBlock("\nplotting GP training fit\n"):
+        # Gaussian process fit.
+        plotter.plot_gp_training_fit(width=3)
+        utils.save_figure_to_dir(f"train_{kernel.replace('*', '_')}.pdf", andopen=openonsave, dir=save)
+
+        # Bayesian model performance.
+        for k, flag in enumerate((True, False)):
+            plotter.plot_posterior(individual=flag)
+            utils.save_figure_to_dir(f"predict{k}_{kernel.replace('*', '_')}.pdf", andopen=openonsave, dir=save)
+
+    # Prediction at different initial conditions.
+    if config.test_initial_conditions is None:
+        return
+    test_trajectory = truthmodel.solve(
+        config.test_initial_conditions,
+        time_domain_prediction,
+        strict=True,
+    )
+    with opinf.utils.TimedBlock("sampling posterior distribution"):
+        draws = bayesian_model.solution_posterior(
+            initial_conditions=config.test_initial_conditions,
+            timepoints=time_domain_prediction,
+            ndraws=ndraws,
+        )
+
+    fig = plotter.plot_posterior_newICs(draws, truth=test_trajectory)
+    utils.save_figure_to_dir(f"newtrajectory_{kernel.replace('*', '_')}.pdf", andopen=openonsave, fig=fig, dir=save)
+
+
+# =============================================================================
+if __name__ == "__main__":
+    # Set up command line argument parsing.
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    fname = os.path.basename(__file__)
+    spc = " " * len(fname)
+    parser.usage = f""" python3 {fname} --help
+        python3 {fname} T_MAX NUMSAMPLES NOISELEVEL NUMPTS
+                {spc} [--gpreg ETA] [--opinfreg RHO] [--ndraws NDRAWS]
+                {spc} [--exportto PREFIX] [--noopen]
+    """
+
+    parser.add_argument(
+        "t_max",
+        type=float,
+        help="upper bound on the training time domain",
+    )
+    parser.add_argument(
+        "num_samples",
+        type=int,
+        help="number of training snapshots to sample",
+    )
+    parser.add_argument(
+        "noiselevel",
+        type=float,
+        help="percentage of noise added to training snapshots",
+    )
+    parser.add_argument(
+        "num_regression_points",
+        type=int,
+        help="number of points to use in the OpInf regression0",
+    )
+    parser.add_argument(
+        "--kernel", "-k",
+        type=str,
+        default='rbf'
+    )
+    parser.add_argument(
+        "--gpreg",
+        type=float,
+        # TODO - Maybe reduce this
+        default=5e-4,
+        help="regularization for GP matrices (eta)",
+    )
+    parser.add_argument(
+        "--ndraws",
+        type=int,
+        default=100,
+        help="number of posterior model draws",
+    )
+    parser.add_argument(
+        "--ensemble",
+        action='store_true'
+    )
+    parser.add_argument(
+        "--prior",
+        action="store_true",
+        help="Computer priors to help gp fitting"
+    )
+    parser.add_argument(
+        "--exportto",
+        help="prefix for HDF5 files to save plot data to",
+    )
+    parser.add_argument(
+        "--noopen",
+        action="store_true",
+        help="do not open figures automatically",
+    )
+    
+    parser.add_argument(
+        "--custom_save",
+        type=str,
+        default="none",
+        help="Custom location to save figures to"
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Print out information during computation"
+    )
+    parser.add_argument(
+        "--plots",
+        action="store_true",
+        help="Similar to verbose output but save intermediate plots showing a variety of information"
+    )
+    parser.add_argument(
+        "--no_seed",
+        action="store_true",
+        help="Truly random, no reprodicbility"
+    )
+
+    args = parser.parse_args()
+    main(
+        training_span=[0, args.t_max],
+        num_samples=args.num_samples,
+        noiselevel=args.noiselevel,
+        num_regression_points=args.num_regression_points,
+        kernel=args.kernel,
+        gp_regularizer=args.gpreg,
+        ndraws=args.ndraws,
+        prior=args.prior,
+        exportto=args.exportto,
+        openonsave=not args.noopen,
+        ensemble=args.ensemble,
+        custom_save=args.custom_save,
+        verbose=args.verbose,
+        plots=args.plots,
+        no_seed=args.no_seed,
+    )
