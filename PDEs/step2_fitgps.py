@@ -11,7 +11,7 @@ from typing import Iterable
 import opinf
 
 import config
-import gpkernels
+import gpkernels2 as gpkernels
 
 
 def _fit_single_gaussian_process(

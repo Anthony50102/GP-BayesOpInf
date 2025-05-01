@@ -1437,7 +1437,7 @@ class FitzHughNagumo(_BasePDE):
 
         return np.random.normal(
             loc=states,
-            scale=(states * noise_level),
+            scale=np.abs(states * noise_level),
             size=states.shape,
         )
 
