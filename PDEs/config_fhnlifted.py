@@ -26,7 +26,11 @@ import numpy as np
 
 import opinf
 
+<<<<<<< HEAD
 import pde_models as pdes
+=======
+import pde_models_fn as pdes
+>>>>>>> fitz
 
 
 # Simulation specifications  --------------------------------------------------
@@ -51,6 +55,7 @@ class Basis(opinf.basis.PODBasis):
     A separate POD basis is used for each state variable.
     """
 
+<<<<<<< HEAD
     def fit(self, states, r):
         """Construct the bases."""
         q1, q2 = np.split(states, 2, axis=0)
@@ -59,6 +64,29 @@ class Basis(opinf.basis.PODBasis):
             np.concatenate((q1, q2, q1**2)),
             r,
         )
+=======
+    # def fit(self, states, r):
+    #     """Construct the bases."""
+    #     q1, q2 = np.split(states, 2, axis=0)
+
+    #     return super().fit(
+    #         np.concatenate((q1, q2, q1**2)),
+    #         r,
+    #     )
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.num_vectors = kwargs['num_vectors']
+
+    def fit(self, states):
+        """Construct the bases."""
+        q1, q2 = np.split(states, 2, axis=0)
+
+        print(q1.shape, q2.shape)
+        return super().fit(
+            np.concatenate((q1, q2, q1**2)),
+            )
+
+>>>>>>> fitz
 
     def compress(self, states):
         """Map high-dimensional states to low-dimensional coordinates."""

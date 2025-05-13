@@ -73,6 +73,7 @@ class Basis(opinf.basis.PODBasis):
 
     def fit(self, states):
         states, self.shift_ = opinf.pre.shift(states)
+        print(states.shape, self.nondimensionalize(states).shape)
         return super().fit(self.nondimensionalize(states))
 
     def compress(self, states):
