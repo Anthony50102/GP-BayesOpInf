@@ -7,6 +7,10 @@ FGPGM paper, implemented in JAX for improved performance and automatic different
 """
 import jax
 import jax.numpy as jnp
+import numpyro
+import numpyro.distributions as dist
+from numpyro.infer import MCMC, NUTS
+import jax.random as random
 from functools import partial
 
 def getAs(CDashs, DashCs, CPhis, CDoubleDashs):
@@ -299,3 +303,112 @@ def calculateLogDensity(y, x, CPhis, sigmas, f, theta, As, Ds, Lambdas,
     )
     
     return -(f_post_log + gp_post_log) / scale
+
+def getLambdaStars(gamma, nTime):
+    """
+    each entry represents the LambdaStar of one state, which is the noise
+    covariance between the ODEs and the GP estimates of the derivatives
+    
+    Parameters
+    ----------
+    gamma:  vector of length nStates
+            noise estimate on the derivatives
+    nTime:  scalar
+            amount of time steps in this experiment
+    Returns
+    ----------
+    Lambdas:    list of nStates matrices of shape nTime x nTime    
+    """
+    gamma = jnp.asarray(gamma)
+    Lambdas = []
+    for i in jnp.arange(gamma.shape[0]):
+        Lambdas.append(jnp.eye(nTime)*gamma[i])
+    return Lambdas
+
+def jax_f(x, theta):
+        """
+        \dot{x_0} = x_0 * (theta_0 - theta_1*x_1)
+        \dot{x_1} = -x_1 * (theta_2 - theta_3*x_0)
+        will return derivatives in a vector
+        """
+        firstODE = x[0]*(theta[0] - theta[1]*x[1])
+        secondODE = -x[1]*(theta[2] - theta[3]*x[0])
+        return jnp.array([firstODE, secondODE])
+
+def compute_posterior(
+        xmin,
+        xmax,
+        y,
+        CPhi,
+        As,
+        Ds,
+        sigma,
+        gammas,
+        T,
+        mean,
+        std,
+        nODEParams,
+        D
+):
+    jax_Lambdas = jnp.array(getLambdaStars(gammas, T))
+
+    jax_mean = jnp.array(mean)
+    jax_std = jnp.array(std)
+
+    def model():
+        # Prior for parameters (unconstrained to match original implementation)
+        # We'll handle constraints through the transform
+        states_std_flat = numpyro.sample(
+            "states_std",
+            dist.Uniform(jnp.array(xmin[:-nODEParams]), jnp.array(xmax[:-nODEParams])).to_event(1)
+        )
+        
+        # Prior for ODE parameters
+        params_unconstrained = numpyro.sample(
+            "params_unconstrained",
+            dist.Uniform(jnp.array(xmin[-nODEParams:]), jnp.array(xmax[-nODEParams:])).to_event(1)
+        )
+        
+        # No need for thetaMagnitudes scaling since we're directly defining priors
+        params = params_unconstrained  # * (10 ** thetaMagnitudes) if needed
+        
+        # Calculate log density using JAX-compatible functions
+        # Reshape y to match original calculation
+        jax_y_reshaped = jnp.reshape(y, (-1,), order='F')
+        
+        log_density = -calculateLogDensity(
+            y=jax_y_reshaped,
+            x=states_std_flat,
+            CPhis=[CPhi] * D,  # Single-kernel setup
+            sigmas=[sigma] * D,
+            f=jax_f,
+            theta=params,
+            As=As,
+            Ds=Ds,
+            Lambdas=jax_Lambdas,
+            mean=jax_mean,
+            std=jax_std
+        )
+        
+        # Add the likelihood term
+        numpyro.factor("likelihood", log_density)
+
+
+
+    # 1) Create the NUTS kernel
+    nuts_kernel = NUTS(model)
+
+    # 2) Wrap in MCMC, tuning the number of warmup and samples
+    mcmc = MCMC(nuts_kernel,
+                num_warmup=1000,
+                num_samples=1000,
+                num_chains=4)        # you can run multiple chains in parallel
+
+    # 3) Run it with a JAX PRNG key
+    rng_key = random.PRNGKey(0)
+    mcmc.run(rng_key)
+
+    # 4) Extract posterior samples
+    posterior_samples = mcmc.get_samples()
+    # print(posterior_samples["params_unconstrained"].shape)  # e.g. (2000*4, n_params
+    return posterior_samples
