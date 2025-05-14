@@ -176,7 +176,10 @@ def _posterior_autoregularized_multisample(
     else:
         regularizer = best_reg
         print("Optimization failed, falling back on gridsearch")
-
+    
+    print(rom.operator_matrix)
+    print(rom.operators)
+    np.save('../operator_mat.npy', rom.operator_matrix)
     return get_bayesian_model(regularizer)
 
 

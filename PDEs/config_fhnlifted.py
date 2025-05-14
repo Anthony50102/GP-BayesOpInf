@@ -26,11 +26,7 @@ import numpy as np
 
 import opinf
 
-<<<<<<< HEAD
-import pde_models as pdes
-=======
 import pde_models_fn as pdes
->>>>>>> fitz
 
 
 # Simulation specifications  --------------------------------------------------
@@ -55,16 +51,6 @@ class Basis(opinf.basis.PODBasis):
     A separate POD basis is used for each state variable.
     """
 
-<<<<<<< HEAD
-    def fit(self, states, r):
-        """Construct the bases."""
-        q1, q2 = np.split(states, 2, axis=0)
-
-        return super().fit(
-            np.concatenate((q1, q2, q1**2)),
-            r,
-        )
-=======
     # def fit(self, states, r):
     #     """Construct the bases."""
     #     q1, q2 = np.split(states, 2, axis=0)
@@ -86,7 +72,6 @@ class Basis(opinf.basis.PODBasis):
             np.concatenate((q1, q2, q1**2)),
             )
 
->>>>>>> fitz
 
     def compress(self, states):
         """Map high-dimensional states to low-dimensional coordinates."""
@@ -114,6 +99,10 @@ class ReducedOrderModel(opinf.models.ContinuousModel):
     @staticmethod
     def input_func(t):
         return FullOrderModel.left_neumann_condition(t, a, b)
+
+    @staticmethod
+    def full_rhs(t):
+        pass
 
 
 monolithic = True
