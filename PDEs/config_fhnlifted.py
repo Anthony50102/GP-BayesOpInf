@@ -80,7 +80,7 @@ class Basis(opinf.basis.PODBasis):
             np.concatenate((q1, q2, q1**2)),
         )
 
-    def decompress(self, states_compressed):
+    def decompress(self, states_compressed, **kwargs):
         """Map low-dimensional coordinates to high-dimensional states."""
         q = super().decompress(states_compressed)
         q1, q2, _ = np.split(q, 3, axis=0)
@@ -93,8 +93,10 @@ class ReducedOrderModel(opinf.models.ContinuousModel):
     ivp_method = "Radau"
     input_dimension = 1
 
-    def __init__(self):
-        super().__init__("cAHBN")
+    def __init__(self, *args, **kwargs):
+        # ensure that the base class sees your default operator string
+        kwargs.setdefault('operators', "cAHBN")
+        super().__init__(*args, **kwargs)
 
     @staticmethod
     def input_func(t):

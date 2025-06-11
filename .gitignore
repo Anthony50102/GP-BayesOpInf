@@ -16,6 +16,8 @@
 !ODEs/notebooks
 !LowDataODEs
 !LowDataODEs/*ipynb
+!LowDataPDEs
+!LowDataPDEs/*ipynb
  
 # ...and these files in the subdirectories.
 !*/*.py
