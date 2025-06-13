@@ -101,6 +101,10 @@ class ReducedOrderModel(opinf.models.ContinuousModel):
     @staticmethod
     def input_func(t):
         return FullOrderModel.left_neumann_condition(t, a, b)
+    
+    @staticmethod
+    def input_func_jax(t):
+       return FullOrderModel.left_neumann_condition_jax(t, a, b) 
 
     @staticmethod
     def full_rhs(t):

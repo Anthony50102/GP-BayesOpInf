@@ -1325,6 +1325,12 @@ class FitzHughNagumo(_BasePDE):
         """Neumann boundary condition at x = 0 for the first variable."""
         return -a * t**3 * np.exp(-b * t)
 
+    @staticmethod
+    def left_neumann_condition_jax(t, a, b):
+        import jax.numpy as jnp
+        """Neumann boundary condition at x = 0 for the first variable."""
+        return -a * t**3 * jnp.exp(-b * t)
+
     # Differential equation ---------------------------------------------------
     def derivative(self, t: float, state: np.ndarray) -> np.ndarray:
         """Compute the derivative of the state at the given time.
