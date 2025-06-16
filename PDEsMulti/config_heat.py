@@ -80,6 +80,7 @@ class Basis(opinf.basis.PODBasis):
     def compress(self, states):
         """Map high-dimensional states to low-dimensional coordinates."""
         states = np.concatenate((states, states**2))
+        print(states.shape, self.shift_.shape)
         states = opinf.pre.shift(states, shift_by=self.shift_)
         return super().compress(states)
 

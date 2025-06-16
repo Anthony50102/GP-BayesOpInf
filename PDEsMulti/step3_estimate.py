@@ -204,6 +204,11 @@ def _posterior_autoregularized_multisample(
 
         return get_bayesian_model(regularizer)
 
+    print()
+    print()
+    print(rom.operator_matrix.shape)
+    print()
+    print()
     raise RuntimeError("Regularization search optimization FAILED")
 
 
