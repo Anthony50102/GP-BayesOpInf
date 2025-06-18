@@ -18,6 +18,8 @@
 !LowDataODEs/*ipynb
 !LowDataPDEs
 !LowDataPDEs/*ipynb
+!PPCA
+!PPCA/*ipynb
  
 # ...and these files in the subdirectories.
 !*/*.py
