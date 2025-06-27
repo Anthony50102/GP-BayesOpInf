@@ -207,6 +207,7 @@ def _posterior_autoregularized_multisample(
     print()
     print()
     print(rom.operator_matrix.shape)
+    print(rom.operator_matrix)
     print()
     print()
     raise RuntimeError("Regularization search optimization FAILED")
